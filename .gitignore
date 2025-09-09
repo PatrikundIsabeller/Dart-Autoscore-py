@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+version.txt
+
+# Virtualenv
+.venv/
+
+# PyInstaller Artefakte
+build/
+dist/
+release/
+*.spec
+*.ico
+make_icon.py
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
+logs/
+
+# Node/Next.js Play-App (falls vorhanden)
+play/node_modules/
+play/.next/
+play/.env.local
+play/.env
