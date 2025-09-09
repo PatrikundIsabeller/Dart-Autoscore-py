@@ -13,7 +13,6 @@ version.txt
 build/
 dist/
 release/
-*.spec
 *.ico
 make_icon.py
 
