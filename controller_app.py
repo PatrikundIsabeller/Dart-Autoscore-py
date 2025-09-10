@@ -13,11 +13,13 @@
 #
 # Agent (Mock) separat starten (siehe Chat-Anleitung): http://127.0.0.1:4700
 # -------------------------------------------------------------
-
+from triple_calib import open_triple_calibration
 from dotenv import load_dotenv
+
 load_dotenv()  # lädt .env
 from PyQt6 import QtCore, QtGui, QtWidgets
 from calibration_dialog import CalibrationDialog
+from calibrate_wizard import open_calibration
 import webbrowser
 import random
 import requests
@@ -31,7 +33,6 @@ DETECTOR_VERSION = "v0.26.15"
 AGENT_URL = os.environ.get("TRIPLEONE_AGENT", "http://127.0.0.1:4700")
 API_URL = os.environ.get("TRIPLEONE_API", "http://127.0.0.1:5080")
 DEVICE_ID = os.environ.get("TRIPLEONE_DEVICE", "dev_local")
-
 
 
 # ----------------------------- Status-Poller ----------------------------- #
@@ -220,7 +221,14 @@ class FooterBar(QtWidgets.QFrame):
         self.lbl_cpu = QtWidgets.QLabel("–%")
         self.lbl_app = QtWidgets.QLabel(APP_VERSION)
         self.lbl_det = QtWidgets.QLabel(DETECTOR_VERSION)
-        for w in [self.lbl_fps, self.lbl_drop, self.lbl_mem, self.lbl_cpu, self.lbl_app, self.lbl_det]:
+        for w in [
+            self.lbl_fps,
+            self.lbl_drop,
+            self.lbl_mem,
+            self.lbl_cpu,
+            self.lbl_app,
+            self.lbl_det,
+        ]:
             w.setProperty("class", "stat")
             right.addWidget(w)
         right.addStretch(1)
@@ -372,7 +380,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Preferences
         c_prefs = Card("Preferences")
-        cb1 = QtWidgets.QCheckBox("Start Autodarts Desktop when you sign in to your computer")
+        cb1 = QtWidgets.QCheckBox(
+            "Start Autodarts Desktop when you sign in to your computer"
+        )
         cb2 = QtWidgets.QCheckBox("Automatically install detection updates")
         cb2.setChecked(True)
         c_prefs.body_lay.addWidget(cb1)
@@ -385,7 +395,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         btn_play = QtWidgets.QPushButton("Play")
         btn_play.setProperty("class", "btn-link")
-        btn_play.clicked.connect(self.on_play)   # <<< wichtig
+        btn_play.clicked.connect(self.on_play)  # <<< wichtig
         links.addWidget(btn_play)
 
         for name, url in [
@@ -433,7 +443,10 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # ---- Status-Poller starten ---------------------------------------
         self.poller = StatusPoller(
-            os.environ.get("TRIPLEONE_AGENT", AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700"),
+            os.environ.get(
+                "TRIPLEONE_AGENT",
+                AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700",
+            ),
             1.0,
             self,
         )
@@ -444,7 +457,10 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---------------------- HTTP Helper & Actions -------------------------
     def http_post(self, path: str, body: dict | None = None):
         try:
-            base = os.environ.get("TRIPLEONE_AGENT", AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700")
+            base = os.environ.get(
+                "TRIPLEONE_AGENT",
+                AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700",
+            )
             r = requests.post(base.rstrip("/") + path, json=body or {}, timeout=1.2)
             if r.ok:
                 if r.headers.get("content-type", "").startswith("application/json"):
@@ -465,10 +481,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.http_post("/control/reset")
 
     def on_calibrate(self):
-        dlg = CalibrationDialog(self)
-        if dlg.exec():
-            self.toast("Calibration saved.")
-
+        open_triple_calibration(self)
 
     # ------------------------- PLAY-FLOW ----------------------------------
     def on_play(self):
@@ -480,20 +493,34 @@ class MainWindow(QtWidgets.QMainWindow):
         4) Browser mit playUrl?token=... öffnen
         """
         # URLs/IDs aus ENV nehmen, sonst Fallbacks/Globals
-        agent_url = os.environ.get("TRIPLEONE_AGENT", AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700")
-        api_url   = os.environ.get("TRIPLEONE_API",   API_URL   if "API_URL"   in globals() else "http://127.0.0.1:5080")
-        device_id = os.environ.get("TRIPLEONE_DEVICE", DEVICE_ID if "DEVICE_ID" in globals() else "dev_local")
+        agent_url = os.environ.get(
+            "TRIPLEONE_AGENT",
+            AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700",
+        )
+        api_url = os.environ.get(
+            "TRIPLEONE_API",
+            API_URL if "API_URL" in globals() else "http://127.0.0.1:5080",
+        )
+        device_id = os.environ.get(
+            "TRIPLEONE_DEVICE", DEVICE_ID if "DEVICE_ID" in globals() else "dev_local"
+        )
 
         # 1) Config holen
         try:
-            cfg = requests.get(agent_url.rstrip("/") + "/calibration", timeout=1.5).json()
+            cfg = requests.get(
+                agent_url.rstrip("/") + "/calibration", timeout=1.5
+            ).json()
         except Exception as e:
             self.toast(f"Config lesen fehlgeschlagen: {e}")
             return
 
         # 2) Snapshot
         try:
-            r1 = requests.post(f"{api_url}/v1/devices/{device_id}/config/snapshot", json=cfg, timeout=3.0)
+            r1 = requests.post(
+                f"{api_url}/v1/devices/{device_id}/config/snapshot",
+                json=cfg,
+                timeout=3.0,
+            )
             r1.raise_for_status()
         except Exception as e:
             self.toast(f"Snapshot fehlgeschlagen: {e}")
@@ -503,7 +530,11 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             r2 = requests.post(
                 f"{api_url}/v1/sessions",
-                json={"deviceId": device_id, "gameType": "X01", "options": {"startScore": 501, "doubleOut": True}},
+                json={
+                    "deviceId": device_id,
+                    "gameType": "X01",
+                    "options": {"startScore": 501, "doubleOut": True},
+                },
                 timeout=3.0,
             )
             r2.raise_for_status()

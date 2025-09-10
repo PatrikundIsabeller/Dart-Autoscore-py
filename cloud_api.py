@@ -9,19 +9,21 @@ from pydantic import BaseModel
 import uvicorn
 
 # Basis-URL für die Web-Play-App (ENV überschreibbar)
-PLAY_BASE_URL = os.getenv("PLAY_BASE_URL", "http://127.0.0.1:3000")
+PLAY_BASE_URL = os.getenv("PLAY_BASE_URL", "http://127.0.0.1:5080")
 
 app = FastAPI(title="TripleOne Cloud Stub", version="0.0.1")
 
 # In-Memory Stores (für Demo)
-DEVICE_CONFIGS: dict[str, dict] = {}   # deviceId -> {"config": ..., "ts": ...}
-TOKENS: dict[str, str] = {}            # one-time-token -> sessionId
-SESSIONS: dict[str, dict] = {}         # sessionId -> {deviceId, created, options, ...}
+DEVICE_CONFIGS: dict[str, dict] = {}  # deviceId -> {"config": ..., "ts": ...}
+TOKENS: dict[str, str] = {}  # one-time-token -> sessionId
+SESSIONS: dict[str, dict] = {}  # sessionId -> {deviceId, created, options, ...}
+
 
 class SessionReq(BaseModel):
     deviceId: str
     gameType: str = "X01"
     options: dict | None = None
+
 
 @app.post("/v1/devices/{deviceId}/config/snapshot")
 async def snapshot(deviceId: str, req: Request):
@@ -31,12 +33,13 @@ async def snapshot(deviceId: str, req: Request):
     DEVICE_CONFIGS[deviceId] = {"config": cfg, "ts": time.time()}
     return {"ok": True, "deviceId": deviceId, "ts": DEVICE_CONFIGS[deviceId]["ts"]}
 
+
 @app.post("/v1/sessions")
 async def create_session(body: SessionReq):
     if body.deviceId not in DEVICE_CONFIGS:
         raise HTTPException(400, "no config snapshot for device")
     sid = f"ses_{secrets.token_urlsafe(8)}"
-    token = f"ptk_{secrets.token_urlsafe(24)}"   # One-Time-Token
+    token = f"ptk_{secrets.token_urlsafe(24)}"  # One-Time-Token
     SESSIONS[sid] = {
         "sessionId": sid,
         "deviceId": body.deviceId,
@@ -49,8 +52,9 @@ async def create_session(body: SessionReq):
     return {
         "sessionId": sid,
         "oneTimeToken": token,
-        "playUrl": f"{PLAY_BASE_URL}/s"   # Next.js-Seite /s?token=...
+        "playUrl": f"{PLAY_BASE_URL}/play",  # Next.js-Seite /s?token=...
     }
+
 
 @app.post("/v1/sessions/redeem")
 async def redeem(body: dict):
@@ -67,6 +71,7 @@ async def redeem(body: dict):
         "options": ses["options"],
         "gameType": ses["gameType"],
     }
+
 
 # >>> NEU: Session-Config abrufen (für die Play-Seite)
 @app.get("/v1/sessions/{sid}/config")
@@ -85,11 +90,14 @@ async def session_config(sid: str):
         "gameType": ses["gameType"],
     }
 
+
 # Optionaler HTML-Stub (nicht benötigt, wenn Next.js /s verwendet wird)
 @app.get("/play", response_class=HTMLResponse)
 async def play(token: str | None = None):
     if not token or token not in TOKENS:
-        return HTMLResponse("<h1>Token fehlt oder ist abgelaufen.</h1>", status_code=401)
+        return HTMLResponse(
+            "<h1>Token fehlt oder ist abgelaufen.</h1>", status_code=401
+        )
     sid = TOKENS.pop(token)
     ses = SESSIONS[sid]
     cfg = DEVICE_CONFIGS[ses["deviceId"]]["config"]
@@ -107,6 +115,7 @@ async def play(token: str | None = None):
     </html>
     """
     return HTMLResponse(html)
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=5080)
