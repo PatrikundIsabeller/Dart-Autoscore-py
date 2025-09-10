@@ -299,41 +299,46 @@ def undistort_simple(frame: np.ndarray, k1: float, k2: float):
 
 # -------------- Drag widget (single feed) --------------
 class DragBoard(QtWidgets.QLabel):
-    """Liveframe + warped Grid + 4 draggable Punkte (TL,TR,BR,BL) mit Feinjustage."""
-
+    """Liveframe + warped Grid + 4 draggable Punkte (TL,TR,BR,BL) mit Feinjustage.
+       Wedge (20er-Sektor) wird im 600x600-Template erzeugt und via Homographie gemappt.
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(360, 220)
         self.setStyleSheet("QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}")
 
-        # --- Zustand -------------------------------------------------
-        self.frame: Optional[np.ndarray] = None
-        self.points = np.array([[100, 100], [540, 100], [540, 380], [100, 380]], dtype=np.float32)
-
-        # Homographie-Matrix (wird in homography() berechnet)
-        self.M: Optional[np.ndarray] = None
-
-        # Polygon für das rote Tortenstück (Bild-Koordinaten) – None = aus
-        self._wedge_poly: list[tuple[float, float]] | None = None
-
-
-        # State
+        # --- State (einmalig, keine Duplikate!) ---
         self.frame: Optional[np.ndarray] = None
         self.points = np.array([[100, 100], [540, 100], [540, 380], [100, 380]], dtype=np.float32)
         self.M: Optional[np.ndarray] = None
-        self._wedge_poly = None  # Liste von (x,y) Bildkoordinaten
         self._drag_idx = -1
-        self._active_idx = 0  # Tastaturfokus: 0..3
+        self._active_idx = 0
 
-        # Overlay/Board-Parameter (werden vom Panel gesetzt)
-        self.alpha = 0.65           # 0..1
-        self.board_scale = 1.000    # 0.95..1.05
-        self.board_rotate = 0.0     # Grad (-5..+5)
+        # Overlay/Board-Feinjustage
+        self.alpha = 0.65
+        self.board_scale = 1.000
+        self.board_rotate = 0.0  # Grad
 
-    def set_wedge_poly(self, poly: Optional[list[tuple[float, float]]]):
-        """Polygon des 20er-Sektors in Bildkoordinaten setzen (oder None zum Ausblenden)."""
-        self._wedge_poly = poly
+        # Wedge als TEMPLATE-Polygon (600x600); wird per Homographie in Bild gemappt
+        self._wedge_tmpl: Optional[np.ndarray] = None  # (N,1,2) float32
+        self._wedge_angle_deg: float = 90.0           # 20 oben
+
+    # ---------- Wedge-Template ----------
+    def set_wedge_template(self, angle_up_deg: float = 90.0, spread_deg: float = 18.0,
+                           r_in: float = DEFAULT_RINGS["bull_outer"],
+                           r_out: float = DEFAULT_RINGS["double_outer"]) -> None:
+        """Erzeugt das 20°-Wedge im 600x600-Template (Zentrum (300,300))."""
+        self._wedge_angle_deg = angle_up_deg
+        cx = cy = 300.0
+        R = 300.0
+        a0 = np.deg2rad(angle_up_deg - spread_deg/2.0)
+        a1 = np.deg2rad(angle_up_deg + spread_deg/2.0)
+
+        outer = [(cx + R*r_out*np.cos(t), cy - R*r_out*np.sin(t)) for t in np.linspace(a0, a1, 24)]
+        inner = [(cx + R*r_in *np.cos(t), cy - R*r_in *np.sin(t)) for t in np.linspace(a1, a0, 24)]
+        poly  = np.array(outer + inner, dtype=np.float32).reshape(-1,1,2)
+        self._wedge_tmpl = poly
         self.update()
 
     # ---------- public setter ----------
@@ -369,12 +374,6 @@ class DragBoard(QtWidgets.QLabel):
         dst = self.points.astype(np.float32)
         self.M = cv2.getPerspectiveTransform(src, dst)
         return self.M
-    
-    def set_wedge_poly(self, poly: Optional[list[tuple[float, float]]]):
-        """Polygon des 20er-Sektors in Bildkoordinaten setzen (oder None zum Ausblenden)."""
-        self._wedge_poly = poly
-        self.update()
-
 
     # ---------- painting ----------
     def _paint_pixmap(self, p: QtGui.QPainter, pm: QtGui.QPixmap):
@@ -388,10 +387,8 @@ class DragBoard(QtWidgets.QLabel):
 
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
-        p.setRenderHints(
-            QtGui.QPainter.RenderHint.Antialiasing
-            | QtGui.QPainter.RenderHint.SmoothPixmapTransform
-        )
+        p.setRenderHints(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+
         if self.frame is None:
             p.setPen(QtGui.QPen(QtGui.QColor("#aaa")))
             p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, "No signal")
@@ -405,29 +402,30 @@ class DragBoard(QtWidgets.QLabel):
             h, w = self.frame.shape[:2]
             warped = cv2.warpPerspective(GRID_600, self.M, (w, h))
             wpm = cvimg_to_qpix(warped)
-            p.setOpacity(0.7)
+            p.setOpacity(self.alpha)
             self._paint_pixmap(p, wpm)
             p.setOpacity(1.0)
 
-        # --- rotes Tortenstück (falls gesetzt) ---  <<< DIESER NEUE BLOCK
-        if self._wedge_poly and self.frame is not None:
-            fw, fh = self.frame.shape[1], self.frame.shape[0]
-            path = QtGui.QPainterPath()
-            first = True
-            for (x_img, y_img) in self._wedge_poly:
-                x = ox + (x_img / fw) * (ps.width() * scale)
-                y = oy + (y_img / fh) * (ps.height() * scale)
-                if first:
-                    path.moveTo(float(x), float(y))
-                    first = False
-                else:
-                    path.lineTo(float(x), float(y))
-            path.closeSubpath()
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 64, 64, 220), 1))
-            p.setBrush(QtGui.QColor(255, 64, 64, 90))
-            p.drawPath(path)
+            # --- rotes Wedge via Homographie (Template -> Bild) ---
+            if self._wedge_tmpl is not None:
+                try:
+                    pts_img = cv2.perspectiveTransform(self._wedge_tmpl, self.M).reshape(-1, 2)
+                    fw, fh = self.frame.shape[1], self.frame.shape[0]
+                    path = QtGui.QPainterPath()
+                    first = True
+                    for (x_img, y_img) in pts_img:
+                        x = ox + (x_img / fw) * (ps.width() * scale)
+                        y = oy + (y_img / fh) * (ps.height() * scale)
+                        if first: path.moveTo(float(x), float(y)); first = False
+                        else:     path.lineTo(float(x), float(y))
+                    path.closeSubpath()
+                    p.setPen(QtGui.QPen(QtGui.QColor(255, 64, 64, 220), 1))
+                    p.setBrush(QtGui.QColor(255, 64, 64, 90))
+                    p.drawPath(path)
+                except Exception:
+                    pass
 
-        # Punkte (dein bestehender Code)
+        # Punkte
         p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
         p.setBrush(QtGui.QColor(34, 197, 94, 180))
         fw, fh = self.frame.shape[1], self.frame.shape[0]
@@ -439,7 +437,7 @@ class DragBoard(QtWidgets.QLabel):
             p.drawText(QtCore.QPointF(float(x) + 8.0, float(y) - 8.0), str(idx + 1))
             p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
 
-    # ---------- mouse/keyboard ----------
+    # ---------- Maus/Tastatur ----------
     def _img_coords_from_mouse(self, e: QtGui.QMouseEvent):
         pm = cvimg_to_qpix(self.frame)
         rect = self.rect(); ps = pm.size()
@@ -470,86 +468,22 @@ class DragBoard(QtWidgets.QLabel):
         self._drag_idx = -1
 
     def keyPressEvent(self, e: QtGui.QKeyEvent):
-        # 1..4 = Punktwahl, Pfeile = nudgen (Shift=5px, Ctrl=20px)
         k = e.key()
         if k in (QtCore.Qt.Key.Key_1, QtCore.Qt.Key.Key_2, QtCore.Qt.Key.Key_3, QtCore.Qt.Key.Key_4):
-            self._active_idx = int(k - QtCore.Qt.Key.Key_1)
-            self.update(); return
+            self._active_idx = int(k - QtCore.Qt.Key.Key_1); self.update(); return
         step = 1.0
-        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier: step = 5.0
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:   step = 5.0
         if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier: step = 20.0
         if k == QtCore.Qt.Key.Key_Left:  self.points[self._active_idx, 0] -= step
         if k == QtCore.Qt.Key.Key_Right: self.points[self._active_idx, 0] += step
         if k == QtCore.Qt.Key.Key_Up:    self.points[self._active_idx, 1] -= step
         if k == QtCore.Qt.Key.Key_Down:  self.points[self._active_idx, 1] += step
-        # Q/E rotieren, W/S skalieren minimal
         if k == QtCore.Qt.Key.Key_Q: self.board_rotate -= 0.2
         if k == QtCore.Qt.Key.Key_E: self.board_rotate += 0.2
         if k == QtCore.Qt.Key.Key_W: self.board_scale  += 0.001
         if k == QtCore.Qt.Key.Key_S: self.board_scale  -= 0.001
         self.update()
 
-
-
-# -------------- Kamera-Panel (eine Kachel) --------------
-SECTOR_SEQ = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
-
-def _fit_h_from_ellipse(center, axes, tilt_deg, rot_final_deg) -> Optional[np.ndarray]:
-    """Viele (src,dst)-Paare erzeugen und Homography robust schätzen (LMEDS)."""
-    (cx, cy), (MA, ma) = center, axes
-    a, b = MA/2.0, ma/2.0
-    ang = tilt_deg
-
-    src_pts, dst_pts = [], []
-    R = 300.0
-    template_radii = [R, R*0.95, R*0.66, R*0.60, R*0.12, R*0.06]  # außen..bull
-    for t in range(16):
-        theta = 2.0*np.pi * t/16.0
-        for r in template_radii:
-            sx = 300.0 + r*np.cos(theta)
-            sy = 300.0 + r*np.sin(theta)
-
-            phi_deg = np.rad2deg(theta) - rot_final_deg
-            phi = np.deg2rad(phi_deg)
-
-            rout = _ellipse_rad_at_angle(a, b, phi, ang)  # Radius außen
-            rdst = rout * (r / R)
-
-            dstx = cx + rdst*np.cos(phi)
-            dsty = cy + rdst*np.sin(phi)
-
-            src_pts.append([sx, sy])
-            dst_pts.append([dstx, dsty])
-
-    src_np = np.array(src_pts, dtype=np.float32)
-    dst_np = np.array(dst_pts, dtype=np.float32)
-    H, _ = cv2.findHomography(src_np, dst_np, method=cv2.LMEDS)
-    return H
-
-
-def _make_wedge_poly(center, axes, tilt_deg, rot_final_deg, span_deg=18.0, frac=0.80) -> list[tuple[float,float]]:
-    """
-    Baut ein Polygon für das rote Tortenstück (zentral -> Bogen -> zentral).
-    span_deg: 18° für eine Sektorspalte; frac: Anteil des Außenradius.
-    """
-    (cx, cy), (MA, ma) = center, axes
-    a, b = MA/2.0, ma/2.0
-    ang = tilt_deg
-
-    mid = np.deg2rad(0.0 - rot_final_deg)    # Richtung "oben" nach Rotation
-    half = np.deg2rad(span_deg/2.0)
-    start = mid - half
-    end   = mid + half
-
-    # Bogenpunkte entlang des äußeren Radius (leicht innen)
-    arc = []
-    for t in np.linspace(start, end, 20):
-        rout = _ellipse_rad_at_angle(a, b, t, ang) * frac
-        x = cx + rout*np.cos(t)
-        y = cy + rout*np.sin(t)
-        arc.append((float(x), float(y)))
-
-    return [(float(cx), float(cy))] + arc + [(float(cx), float(cy))]
 
 
 # ----------------------- CamPanel -----------------------
@@ -567,6 +501,7 @@ class CamPanel(QtWidgets.QFrame):
 
         # Ansicht
         self.view = DragBoard()
+        self.view.set_wedge_template(90.0)   # 20 nach oben im Template
 
         # Kameraauswahl (Items füllt TripleCalibration)
         self.cmb = QtWidgets.QComboBox()
@@ -615,6 +550,19 @@ class CamPanel(QtWidgets.QFrame):
         # Ergebnis der Auto-Detektion (für Live-Nachführung bei rot/scale)
         self._last_center: Optional[tuple[float, float]] = None
         self._last_radius: Optional[float] = None
+
+        self.btn_left  = QtWidgets.QToolButton(); self.btn_left.setText("⟲")
+        self.btn_right = QtWidgets.QToolButton(); self.btn_right.setText("⟳")
+        bar.addWidget(self.btn_left, 0)
+        bar.addWidget(self.btn_right, 0)
+
+        self.btn_left.clicked.connect(lambda: self._nudge_wedge(-18))
+        self.btn_right.clicked.connect(lambda: self._nudge_wedge(+18))
+
+        def _nudge_wedge(self, delta_deg: float):
+            if hasattr(self.view, "_wedge_angle_deg"):
+                self.view.set_wedge_template(self.view._wedge_angle_deg + delta_deg)
+
 
     # ---------- Kamera-Lifecycle ----------
     def _on_select(self, _):
@@ -748,7 +696,7 @@ class CamPanel(QtWidgets.QFrame):
 
     # ---------- Geometrie anwenden ----------
     def _apply_transform(self):
-        """Erzeuge points (Ziel-Quadrilateral) und Wedge aus center/r/scale/rot."""
+        """Erzeuge points (Ziel-Quadrilateral) aus center/r/scale/rot. Wedge kommt aus Template."""
         if self._last_center is None or self._last_radius is None:
             return
         cx, cy = self._last_center
@@ -757,20 +705,13 @@ class CamPanel(QtWidgets.QFrame):
         rot_deg = float(self.rot.value())
         rot_rad = np.deg2rad(rot_deg)
 
-        # Quadratecken um (cx,cy) mit Kantenlänge 2*s*r
         half = s * r
-        corners = np.array([
-            [-half, -half], [ half, -half], [ half,  half], [-half,  half]
-        ], dtype=np.float32)
-
+        corners = np.array([[-half, -half],[half,-half],[half,half],[-half,half]], dtype=np.float32)
         R = np.array([[np.cos(rot_rad), -np.sin(rot_rad)],
-                      [np.sin(rot_rad),  np.cos(rot_rad)]], dtype=np.float32)
+                    [np.sin(rot_rad),  np.cos(rot_rad)]], dtype=np.float32)
         dst = (corners @ R.T) + np.array([cx, cy], dtype=np.float32)
 
-        self.view.points = dst.astype(np.float32)  # DragBoard holt daraus self.M
-        # Wedge: 20er-Sektor (±9° um "oben")
-        wedge = self._make_wedge_poly((cx, cy), r_out=r*0.98, r_in=r*0.10, angle_up_deg=90.0 + rot_deg, spread_deg=18.0)
-        self.view.set_wedge_poly(wedge)
+        self.view.points = dst.astype(np.float32)
         self.view.update()
 
     # ---------- Helper ----------
