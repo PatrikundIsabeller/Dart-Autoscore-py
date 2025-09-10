@@ -282,6 +282,17 @@ def draw_dartboard_grid(size: int = 600, rings: dict | None = None) -> np.ndarra
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, white, 2, cv2.LINE_AA)
     return img
 
+# ---- NACH draw_dartboard_grid(...), VOR DragBoard ----
+# Versuche Ring-Radien aus dem Agent zu holen, sonst Defaults
+try:
+    _rings = fetch_calibration().get("rings", DEFAULT_RINGS)
+except Exception:
+    _rings = DEFAULT_RINGS
+
+GRID_600 = draw_dartboard_grid(600, _rings)
+# ---------------------------------------------
+
+
 
 
 def undistort_simple(frame: np.ndarray, k1: float, k2: float):
@@ -713,6 +724,26 @@ class CamPanel(QtWidgets.QFrame):
 
         self.view.points = dst.astype(np.float32)
         self.view.update()
+
+    def _nudge_wedge(self, delta_deg: float):
+        """
+        Dreht das Tortenstück (und damit das Overlay) um delta_deg Grad.
+        Wird von den ◀/▶-Buttons genutzt (±18° = ein Segment).
+        """
+        # aktuellen Wert holen, drehen und in [-180, 180] normalisieren
+        val = float(self.rot.value()) + float(delta_deg)
+        while val > 180.0:
+            val -= 360.0
+        while val < -180.0:
+            val += 360.0
+
+        # SpinBox setzen ohne Rückkopplung und Geometrie anwenden
+        self.rot.blockSignals(True)
+        self.rot.setValue(val)
+        self.rot.blockSignals(False)
+        self._apply_transform()
+
+
 
     # ---------- Helper ----------
     @staticmethod
