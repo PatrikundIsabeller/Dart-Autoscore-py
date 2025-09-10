@@ -236,60 +236,52 @@ def cvimg_to_qpix(img: np.ndarray) -> QtGui.QPixmap:
     )
 
 
-def draw_dartboard_grid(size: int = 600) -> np.ndarray:
-    """Einfaches Raster (Double/Triple/Bull + Segmentlinien + Zahlen)."""
+def draw_dartboard_grid(size: int = 600, rings: dict | None = None) -> np.ndarray:
+    """Board-Template in 600x600 mit korrekten Ringradien."""
+    if rings is None:
+        rings = DEFAULT_RINGS
+
     img = np.zeros((size, size, 3), dtype=np.uint8)
     cx = cy = size // 2
     R = size // 2
+
     white = (255, 255, 255)
-    red = (0, 0, 255)
+    red   = (0, 0, 255)
     green = (0, 255, 0)
-    blue = (255, 0, 0)
-    yellow = (0, 255, 255)
-    # double
-    cv2.circle(img, (cx, cy), int(R * 0.95), red, 2, cv2.LINE_AA)
-    cv2.circle(img, (cx, cy), int(R * 1.00), red, 2, cv2.LINE_AA)
-    # triple
-    cv2.circle(img, (cx, cy), int(R * 0.60), green, 2, cv2.LINE_AA)
-    cv2.circle(img, (cx, cy), int(R * 0.66), green, 2, cv2.LINE_AA)
-    # bull
-    cv2.circle(img, (cx, cy), int(R * 0.06), blue, -1, cv2.LINE_AA)
-    cv2.circle(img, (cx, cy), int(R * 0.12), yellow, 2, cv2.LINE_AA)
-    # Segmente + Zahlen
+    yellow= (0, 255, 255)
+    blue  = (255, 0, 0)
+
+    # Double-Ring
+    cv2.circle(img, (cx, cy), int(R * rings["double_outer"]), red,   2, cv2.LINE_AA)
+    cv2.circle(img, (cx, cy), int(R * rings["double_inner"]), red,   2, cv2.LINE_AA)
+
+    # Triple-Ring
+    cv2.circle(img, (cx, cy), int(R * rings["triple_outer"]), green, 2, cv2.LINE_AA)
+    cv2.circle(img, (cx, cy), int(R * rings["triple_inner"]), green, 2, cv2.LINE_AA)
+
+    # Bull / Bullseye
+    cv2.circle(img, (cx, cy), int(R * rings["bull_inner"]),   blue,  -1, cv2.LINE_AA)   # inner bull
+    cv2.circle(img, (cx, cy), int(R * rings["bull_outer"]),   yellow,2, cv2.LINE_AA)   # outer bull
+
+    # Segmente + Zahlen (20-Start oben; 18° pro Segment)
     nums = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
     for i in range(20):
-        ang = np.deg2rad(90 - i * 18)
-        x0 = int(cx + R * 0.12 * np.cos(ang))
-        y0 = int(cy - R * 0.12 * np.sin(ang))
-        x1 = int(cx + R * 1.00 * np.cos(ang))
-        y1 = int(cy - R * 1.00 * np.sin(ang))
+        ang = np.deg2rad(90 - i * 18)  # 90° = oben
+        r0 = R * rings["bull_outer"]
+        r1 = R * rings["double_outer"]
+        x0 = int(cx + r0 * np.cos(ang)); y0 = int(cy - r0 * np.sin(ang))
+        x1 = int(cx + r1 * np.cos(ang)); y1 = int(cy - r1 * np.sin(ang))
         cv2.line(img, (x0, y0), (x1, y1), white, 1, cv2.LINE_AA)
+
+        # Zahlen zwischen double_outer und Boardrand
         txt = str(nums[i])
-        rad = R * 0.85
-        tx = int(cx + rad * np.cos(ang))
-        ty = int(cy - rad * np.sin(ang))
-        sz = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
-        cv2.rectangle(
-            img,
-            (tx - sz[0] // 2 - 5, ty - sz[1] // 2 - 5),
-            (tx + sz[0] // 2 + 5, ty + sz[1] // 2 + 5),
-            (0, 0, 0),
-            -1,
-        )
-        cv2.putText(
-            img,
-            txt,
-            (tx - sz[0] // 2, ty + sz[1] // 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            white,
-            2,
-            cv2.LINE_AA,
-        )
+        rad = R * 1.02
+        tx = int(cx + rad * np.cos(ang)); ty = int(cy - rad * np.sin(ang))
+        sz = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
+        cv2.putText(img, txt, (tx - sz[0] // 2, ty + sz[1] // 2),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, white, 2, cv2.LINE_AA)
     return img
 
-
-GRID_600 = draw_dartboard_grid(600)
 
 
 def undistort_simple(frame: np.ndarray, k1: float, k2: float):
