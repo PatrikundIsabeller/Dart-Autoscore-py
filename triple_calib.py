@@ -20,6 +20,154 @@ DEFAULT_RINGS = {
     "bull_inner": 0.015,
 }
 
+# ---------- Auto-Detect & Auto-Homography ----------
+
+def _detect_outer_ellipse(frame: np.ndarray) -> Optional[Tuple[Tuple[float,float], Tuple[float,float], float]]:
+    """
+    Liefert (center(x,y), axes(major,minor), angle_deg) der größten 'ring-ähnlichen' Ellipse.
+    Robust genug für Soft-/Steeldart mit Rot/Grün; fällt zurück auf Kanten, wenn Farben schwach.
+    """
+    if frame is None or frame.size == 0:
+        return None
+
+    work = frame.copy()
+    # 1) leichtes entrauschen / Kontrast
+    work = cv2.GaussianBlur(work, (5,5), 0)
+    hsv = cv2.cvtColor(work, cv2.COLOR_BGR2HSV)
+
+    # 2) Rot maskieren (2 Bereiche in HSV)
+    low1 = np.array([0, 80, 60]);   high1 = np.array([12, 255, 255])
+    low2 = np.array([170, 80, 60]); high2 = np.array([179, 255, 255])
+    mask_r = cv2.inRange(hsv, low1, high1) | cv2.inRange(hsv, low2, high2)
+
+    # 3) Kanten als Fallback kombinieren
+    g = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
+    g = cv2.equalizeHist(g)
+    edges = cv2.Canny(g, 60, 140)
+    mask = cv2.bitwise_or(mask_r, edges)
+
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5,5), np.uint8), iterations=2)
+
+    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    best = None; best_score = -1.0
+    H, W = mask.shape[:2]
+    area_img = H * W
+
+    for c in cnts:
+        if len(c) < 20: 
+            continue
+        area = cv2.contourArea(c)
+        if area < 0.01 * area_img:
+            continue
+        try:
+            (cx, cy), (MA, ma), ang = cv2.fitEllipse(c)   # major, minor
+        except cv2.error:
+            continue
+        # Score: groß + möglichst rund
+        ar = min(MA, ma) / max(MA, ma)  # 1 = rund
+        score = area * (0.5 + 0.5*ar)
+        if score > best_score:
+            best_score = score
+            best = ((cx, cy), (MA, ma), ang)
+
+    return best  # oder None
+
+
+def _ellipse_rad_at_angle(a: float, b: float, phi_img: float, theta_deg: float) -> float:
+    """
+    Abstand vom Ellipsenzentrum zur Ellipsenkante entlang 'phi_img' (Bildwinkel),
+    gegeben Halbachsen a,b und Ellipsendrehung theta (Grad).
+    Formel: r = 1 / sqrt((cos(φ')^2 / a^2) + (sin(φ')^2 / b^2)), wobei φ' = φ - θ.
+    """
+    theta = np.deg2rad(theta_deg)
+    phi_p = phi_img - theta
+    c, s = np.cos(phi_p), np.sin(phi_p)
+    den = (c*c)/(a*a) + (s*s)/(b*b)
+    if den <= 1e-12:
+        return 0.0
+    return 1.0 / np.sqrt(den)
+
+
+def _auto_rotation_offset(gray: np.ndarray, center: Tuple[float,float], radius_px: float) -> float:
+    """
+    Schätzt den Rotationswinkel (Grad), bei dem ein 20-Segmente-Template maximal korreliert.
+    Wir sampeln eine Ring-Intensität (zwischen Triple und Double), bauen ein 360-Bin-Profil
+    und korrelieren mit einer 20er-Kammfunktion.
+    """
+    h, w = gray.shape[:2]
+    cx, cy = center
+    r1 = radius_px * 0.62    # ungefähr triple_outer
+    r2 = radius_px * 0.95    # ungefähr double_outer
+    r = (r1 + r2) / 2.0
+
+    # 360 Samples entlang des Rings
+    prof = np.zeros(360, dtype=np.float32)
+    for deg in range(360):
+        phi = np.deg2rad(deg)
+        x = int(cx + r * np.cos(phi))
+        y = int(cy + r * np.sin(phi))
+        if 0 <= x < w and 0 <= y < h:
+            prof[deg] = gray[y, x]
+
+    # Hochpass / normalisieren
+    prof = (prof - np.median(prof))
+    prof /= (np.std(prof) + 1e-6)
+
+    # 20er-Kamm: Peaks alle 18°
+    # Wir nehmen einfach einen Sinus auf 20/2 = 10 Zyklen (approx. Kamm) – stabiler als harte Diracs
+    t = np.arange(360, dtype=np.float32) * np.pi / 180.0
+    template = np.cos(10 * 2 * np.pi * t / (2*np.pi))  # 10 Perioden in 360°
+    # FFT-Korrelation
+    fft_corr = np.fft.ifft(np.fft.fft(prof) * np.conj(np.fft.fft(template))).real
+    best_deg = int(np.argmax(fft_corr) % 360)
+
+    # Wir wollen, dass Segment 20 "oben" (−90°) liegt → Offset umrechnen:
+    # Unser Grid startet bei 90° (oben) → Ausrichtung = (90 - best_deg)
+    rot = 90 - best_deg
+    # Normalisieren in [-180, 180]
+    while rot > 180: rot -= 360
+    while rot < -180: rot += 360
+    return float(rot)
+
+
+def auto_calibrate_from_frame(frame: np.ndarray) -> Optional[dict]:
+    """
+    Kernroutine: findet äußere Ellipse, schätzt Rotations-Offset,
+    berechnet automatische 4 Punkte + Homographie H für 600x600 Board.
+    Returns: {"points": [(x,y)*4], "H": 3x3, "rotation_deg": float}
+    """
+    det = _detect_outer_ellipse(frame)
+    if det is None:
+        return None
+    (cx, cy), (MA, ma), ang = det
+    a, b = MA/2.0, ma/2.0  # Halbachsen
+
+    # 1) Rotation automatisch schätzen
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    rot_est = _auto_rotation_offset(gray, (cx, cy), max(a, b))
+
+    # 2) Vier Zielpunkte automatisch bestimmen:
+    # Wir nehmen die "kreis-Ecken" bei 45°, 135°, 225°, 315° in BILD-Koordinaten
+    # und schneiden die Ellipse entlang dieser Richtungen.
+    angles_deg = [45, 135, 225, 315]
+    dst = []
+    for deg in angles_deg:
+        phi = np.deg2rad(deg)
+        r = _ellipse_rad_at_angle(a, b, phi, ang)
+        x = cx + r * np.cos(phi)
+        y = cy + r * np.sin(phi)
+        dst.append([float(x), float(y)])
+
+    # 3) Quelle sind die vier Ecken des 600x600 Board-Bilds
+    src = np.array([[0,0],[600,0],[600,600],[0,600]], dtype=np.float32)
+    dst_np = np.array(dst, dtype=np.float32)
+
+    H, ok = cv2.findHomography(src, dst_np, 0)
+    if H is None:
+        return None
+
+    return {"points": dst, "H": H, "rotation_deg": rot_est}
+
 
 # ---------------- HTTP ----------------
 def fetch_calibration() -> dict:
@@ -301,40 +449,84 @@ class DragBoard(QtWidgets.QLabel):
 
 # -------------- Kamera-Panel (eine Kachel) --------------
 class CamPanel(QtWidgets.QFrame):
-    def __init__(self, cam_id_guess: int):
+    """
+    Eine Kamerakachel mit:
+      - Kameraauswahl (kein Autostart)
+      - Undistortion (k1/k2)
+      - Overlay-Controls: Alpha, Scale, Rotation
+      - Auto-Kalibrierung (Button): setzt Punkte + Rotation automatisch
+    """
+    def __init__(self, cam_id_guess: int = 0):
         super().__init__()
         self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
 
+        # Bildanzeige (DragBoard rendert Overlay)
         self.view = DragBoard()
+
+        # Kamera-Selector (Dropdown befüllt TripleCalibration)
         self.cmb = QtWidgets.QComboBox()
-        self.cmb.addItem("Select camera", None)
+        self.cmb.addItem("Select camera", None)         # -> keine Kamera gewählt = kein Autostart
         self.cmb.currentIndexChanged.connect(self._on_select)
 
-        # --- Lens & Overlay Controls ---
+        # Lens-/Overlay-Controls
         self.cb_undist = QtWidgets.QCheckBox("Undistort")
-        self.k1 = QtWidgets.QDoubleSpinBox(); self.k1.setRange(-0.50, 0.50); self.k1.setDecimals(3); self.k1.setSingleStep(0.01); self.k1.setValue(0.00); self.k1.setPrefix("k1 ")
-        self.k2 = QtWidgets.QDoubleSpinBox(); self.k2.setRange(-0.50, 0.50); self.k2.setDecimals(3); self.k2.setSingleStep(0.01); self.k2.setValue(0.00); self.k2.setPrefix("k2 ")
+
+        self.k1 = QtWidgets.QDoubleSpinBox()
+        self.k1.setRange(-0.50, 0.50)
+        self.k1.setDecimals(3)
+        self.k1.setSingleStep(0.01)
+        self.k1.setValue(0.00)
+        self.k1.setPrefix("k1 ")
+
+        self.k2 = QtWidgets.QDoubleSpinBox()
+        self.k2.setRange(-0.50, 0.50)
+        self.k2.setDecimals(3)
+        self.k2.setSingleStep(0.01)
+        self.k2.setValue(0.00)
+        self.k2.setPrefix("k2 ")
 
         self.alpha = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
-        self.alpha.setRange(0, 100); self.alpha.setValue(int(self.view.alpha * 100))
-        self.scal = QtWidgets.QDoubleSpinBox(); self.scal.setRange(0.95, 1.05); self.scal.setDecimals(3); self.scal.setSingleStep(0.001); self.scal.setValue(1.000); self.scal.setPrefix("scale ")
-        self.rot  = QtWidgets.QDoubleSpinBox(); self.rot.setRange(-15.0, 15.0); self.rot.setDecimals(1); self.rot.setSingleStep(0.1); self.rot.setValue(0.0); self.rot.setPrefix("rot ")
+        self.alpha.setRange(0, 100)
+        self.alpha.setValue(int(getattr(self.view, "alpha", 0.7) * 100))
 
-        # Bottom bar
+        self.scal = QtWidgets.QDoubleSpinBox()
+        self.scal.setRange(0.95, 1.05)
+        self.scal.setDecimals(3)
+        self.scal.setSingleStep(0.001)
+        self.scal.setValue(1.000)
+        self.scal.setPrefix("scale ")
+
+        self.rot = QtWidgets.QDoubleSpinBox()
+        self.rot.setRange(-15.0, 15.0)
+        self.rot.setDecimals(1)
+        self.rot.setSingleStep(0.1)
+        self.rot.setValue(0.0)
+        self.rot.setPrefix("rot ")
+
+        # Auto-Kalibrierung
+        self.btn_auto = QtWidgets.QPushButton("Auto")
+
+        # Leiste unten
         bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.cmb, 1)
         bar.addWidget(self.cb_undist)
-        bar.addWidget(self.k1); bar.addWidget(self.k2)
-        bar.addWidget(QtWidgets.QLabel("α")); bar.addWidget(self.alpha)
-        bar.addWidget(self.scal); bar.addWidget(self.rot)
+        bar.addWidget(self.k1)
+        bar.addWidget(self.k2)
+        bar.addWidget(QtWidgets.QLabel("α"))
+        bar.addWidget(self.alpha)
+        bar.addWidget(self.scal)
+        bar.addWidget(self.rot)
+        bar.addWidget(self.btn_auto)
 
+        # Gesamtlayout
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(self.view, 1)
         lay.addLayout(bar)
 
-        # Live capture
+        # Capture-Parameter
         self.cap: Optional[cv2.VideoCapture] = None
-        self.res = (1280, 720); self.fps = 30
+        self.res = (1280, 720)
+        self.fps = 30
 
         # Wiring
         self.alpha.valueChanged.connect(lambda v: self.view.set_alpha(v / 100.0))
@@ -343,48 +535,95 @@ class CamPanel(QtWidgets.QFrame):
         self.cb_undist.stateChanged.connect(lambda *_: self.view.update())
         self.k1.valueChanged.connect(lambda *_: self.view.update())
         self.k2.valueChanged.connect(lambda *_: self.view.update())
+        self.btn_auto.clicked.connect(self._on_auto)
 
-    def _on_select(self, _):
+    # ---------------- Camera lifecycle ----------------
+
+    def _on_select(self, _index: int):
         cam = self.cmb.currentData()
         if cam is None:
-            self.stop(); return
+            self.stop()
+            return
         self.start(int(cam))
 
     def start(self, cam_id: int):
         self.stop()
         cap = open_capture(cam_id, self.res, self.fps)
         if cap is None:
-            QtWidgets.QMessageBox.warning(self, "Camera", f"Cannot open camera {cam_id} on any backend.")
+            QtWidgets.QMessageBox.warning(
+                self, "Camera", f"Cannot open camera {cam_id} on any backend."
+            )
             return
         self.cap = cap
 
     def stop(self):
         if self.cap is not None:
-            self.cap.release(); self.cap = None
+            self.cap.release()
+            self.cap = None
         self.view.set_frame(None)
 
     def tick(self):
-        if not self.cap: return
+        if not self.cap:
+            return
         ok, frame = self.cap.read()
-        if ok:
-            if self.cb_undist.isChecked():
-                frame = undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
-            self.view.set_frame(frame.copy())
-        else:
+        if not ok or frame is None:
             self.view.set_frame(None)
+            return
+        if self.cb_undist.isChecked():
+            # einfache polynomial-Undistortion (du hast undistort_simple bereits)
+            frame = undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
+        self.view.set_frame(frame.copy())
 
     def set_globals(self, res: tuple[int, int], fps: int):
-        self.res = res; self.fps = fps
+        """Wird vom übergeordneten Dialog aufgerufen, um Auflösung/FPS zu setzen."""
+        self.res = res
+        self.fps = fps
         if self.cap:
+            # Neu öffnen mit neuen Settings
             idx = self.cmb.currentData()
             if idx is not None:
                 self.start(int(idx))
+
+    # ---------------- Calibration helpers ----------------
 
     def current_h(self) -> Optional[np.ndarray]:
         return self.view.homography()
 
     def current_points(self) -> List[List[float]]:
         return self.view.points.tolist()
+
+    def _curr_frame_for_auto(self) -> Optional[np.ndarray]:
+        """Ein einzelnes Frame für Auto-Kalibrierung abgreifen (mit optionaler Undistortion)."""
+        if not self.cap:
+            return None
+        ok, frame = self.cap.read()
+        if not ok or frame is None:
+            return None
+        if self.cb_undist.isChecked():
+            frame = undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
+        return frame
+
+    def _on_auto(self):
+        """Auto-Kalibrierung: Ellipse + Rotation finden, Punkte & Rotation ins View übernehmen."""
+        frm = self._curr_frame_for_auto()
+        if frm is None:
+            QtWidgets.QMessageBox.warning(self, "Auto", "Kein Kameraframe verfügbar.")
+            return
+
+        res = auto_calibrate_from_frame(frm)
+        if not res:
+            QtWidgets.QMessageBox.warning(self, "Auto", "Board konnte nicht automatisch erkannt werden.")
+            return
+
+        pts = np.array(res["points"], dtype=np.float32)
+        self.view.points = pts
+        self.view.set_board_rotate(float(res.get("rotation_deg", 0.0)))
+
+        # etwas sichtbarer Overlay
+        self.alpha.setValue(70)
+        self.rot.setValue(self.view.board_rotate)
+        self.view.update()
+
 
 
 
