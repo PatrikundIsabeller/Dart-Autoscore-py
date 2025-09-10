@@ -150,54 +150,74 @@ def undistort_simple(frame: np.ndarray, k1: float, k2: float):
 
 # -------------- Drag widget (single feed) --------------
 class DragBoard(QtWidgets.QLabel):
-    """Zeigt Liveframe + warped Grid + 4 draggable Punkte (TL,TR,BR,BL)."""
+    """Liveframe + warped Grid + 4 draggable Punkte (TL,TR,BR,BL) mit Feinjustage."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(360, 220)
-        self.setStyleSheet(
-            "QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}"
-        )
-        # state
-        self.frame: Optional[np.ndarray] = None
-        self.points = np.array(
-            [[100, 100], [540, 100], [540, 380], [100, 380]], dtype=np.float32
-        )
-        self.M: Optional[np.ndarray] = None
+        self.setStyleSheet("QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}")
 
+        # State
+        self.frame: Optional[np.ndarray] = None
+        self.points = np.array([[100, 100], [540, 100], [540, 380], [100, 380]], dtype=np.float32)
+        self.M: Optional[np.ndarray] = None
+        self._drag_idx = -1
+        self._active_idx = 0  # Tastaturfokus: 0..3
+
+        # Overlay/Board-Parameter (werden vom Panel gesetzt)
+        self.alpha = 0.65           # 0..1
+        self.board_scale = 1.000    # 0.95..1.05
+        self.board_rotate = 0.0     # Grad (-5..+5)
+
+    # ---------- public setter ----------
+    def set_alpha(self, a: float):
+        self.alpha = max(0.0, min(1.0, a)); self.update()
+
+    def set_board_scale(self, s: float):
+        self.board_scale = max(0.90, min(1.10, s)); self.update()
+
+    def set_board_rotate(self, deg: float):
+        self.board_rotate = max(-15.0, min(15.0, deg)); self.update()
+
+    # ---------- core ----------
     def set_frame(self, frame: Optional[np.ndarray]):
         self.frame = frame
         self.update()
 
+    def _src_square(self) -> np.ndarray:
+        """600x600-Quad nach Scale/Rotation um das Zentrum transformieren."""
+        src = np.array([[0,0],[600,0],[600,600],[0,600]], dtype=np.float32)
+        c = np.array([300.0, 300.0], dtype=np.float32)
+        v = src - c
+        rad = np.deg2rad(self.board_rotate)
+        R = np.array([[np.cos(rad), -np.sin(rad)],
+                      [np.sin(rad),  np.cos(rad)]], dtype=np.float32)
+        v = (R @ (v.T)).T * self.board_scale
+        return v + c
+
     def homography(self) -> Optional[np.ndarray]:
         if self.points.shape != (4, 2):
             return None
-        # Board-Gitter (600x600) -> Bildpunkte
-        src = np.array([[0, 0], [600, 0], [600, 600], [0, 600]], dtype=np.float32)
+        src = self._src_square()
         dst = self.points.astype(np.float32)
         self.M = cv2.getPerspectiveTransform(src, dst)
         return self.M
 
+    # ---------- painting ----------
     def _paint_pixmap(self, p: QtGui.QPainter, pm: QtGui.QPixmap):
         rect = self.rect()
         ps = pm.size()
         scale = min(rect.width() / ps.width(), rect.height() / ps.height())
         dw, dh = ps.width() * scale, ps.height() * scale
-        ox, oy = (rect.width() - dw) / 2, (rect.height() - dh) / 2
-        p.drawPixmap(
-            QtCore.QRectF(ox, oy, dw, dh),
-            pm,
-            QtCore.QRectF(0, 0, ps.width(), ps.height()),
-        )
+        ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
+        p.drawPixmap(QtCore.QRectF(ox, oy, dw, dh), pm, QtCore.QRectF(0, 0, ps.width(), ps.height()))
         return scale, ox, oy, ps
 
-    def paintEvent(self, ev):
+    def paintEvent(self, _ev):
         p = QtGui.QPainter(self)
-        p.setRenderHints(
-            QtGui.QPainter.RenderHint.Antialiasing
-            | QtGui.QPainter.RenderHint.SmoothPixmapTransform
-        )
+        p.setRenderHints(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+
         if self.frame is None:
             p.setPen(QtGui.QPen(QtGui.QColor("#aaa")))
             p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, "No signal")
@@ -206,164 +226,166 @@ class DragBoard(QtWidgets.QLabel):
         pm = cvimg_to_qpix(self.frame)
         scale, ox, oy, ps = self._paint_pixmap(p, pm)
 
-        # Overlay: warped Grid
+        # Overlay Grid
         if self.homography() is not None:
             h, w = self.frame.shape[:2]
             warped = cv2.warpPerspective(GRID_600, self.M, (w, h))
             wpm = cvimg_to_qpix(warped)
-            p.setOpacity(0.7)
+            p.setOpacity(float(self.alpha))
             self._paint_pixmap(p, wpm)
             p.setOpacity(1.0)
 
-        # Punkte
-        p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
-        p.setBrush(QtGui.QColor(34, 197, 94, 180))
+        # Punkte zeichnen
         fw, fh = self.frame.shape[1], self.frame.shape[0]
         for idx, (x_img, y_img) in enumerate(self.points):
             x = ox + (x_img / fw) * (ps.width() * scale)
             y = oy + (y_img / fh) * (ps.height() * scale)
-            p.drawEllipse(QtCore.QPointF(float(x), float(y)), 6, 6)
+            color = QtGui.QColor("#22c55e") if idx != self._active_idx else QtGui.QColor("#38bdf8")
+            p.setPen(QtGui.QPen(color, 3))
+            p.setBrush(QtGui.QColor(color.red(), color.green(), color.blue(), 180))
+            p.drawEllipse(QtCore.QPointF(float(x), float(y)), 7, 7)
             p.setPen(QtGui.QPen(QtGui.QColor("#e5e7eb")))
             p.drawText(QtCore.QPointF(float(x) + 8.0, float(y) - 8.0), str(idx + 1))
-            p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
 
+    # ---------- mouse/keyboard ----------
     def _img_coords_from_mouse(self, e: QtGui.QMouseEvent):
         pm = cvimg_to_qpix(self.frame)
-        rect = self.rect()
-        ps = pm.size()
+        rect = self.rect(); ps = pm.size()
         scale = min(rect.width() / ps.width(), rect.height() / ps.height())
         dw, dh = ps.width() * scale, ps.height() * scale
-        ox, oy = (rect.width() - dw) / 2, (rect.height() - dh) / 2
+        ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
         pos = e.position()
-        x = (pos.x() - ox) / scale
-        y = (pos.y() - oy) / scale
+        x = (pos.x() - ox) / scale; y = (pos.y() - oy) / scale
         fw, fh = self.frame.shape[1], self.frame.shape[0]
         x_img = max(0, min(fw - 1, x * (fw / ps.width())))
         y_img = max(0, min(fh - 1, y * (fh / ps.height())))
         return x_img, y_img
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        if self.frame is None:
-            return
+        if self.frame is None: return
         xi, yi = self._img_coords_from_mouse(e)
         d = np.linalg.norm(self.points - np.array([xi, yi]), axis=1)
         self._drag_idx = int(np.argmin(d)) if d.size else -1
+        if self._drag_idx >= 0: self._active_idx = self._drag_idx
 
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if self.frame is None or getattr(self, "_drag_idx", -1) < 0:
-            return
+        if self.frame is None or self._drag_idx < 0: return
         xi, yi = self._img_coords_from_mouse(e)
         self.points[self._drag_idx] = [xi, yi]
         self.update()
 
-    def mouseReleaseEvent(self, e: QtGui.QMouseEvent):
+    def mouseReleaseEvent(self, _e: QtGui.QMouseEvent):
         self._drag_idx = -1
+
+    def keyPressEvent(self, e: QtGui.QKeyEvent):
+        # 1..4 = Punktwahl, Pfeile = nudgen (Shift=5px, Ctrl=20px)
+        k = e.key()
+        if k in (QtCore.Qt.Key.Key_1, QtCore.Qt.Key.Key_2, QtCore.Qt.Key.Key_3, QtCore.Qt.Key.Key_4):
+            self._active_idx = int(k - QtCore.Qt.Key.Key_1)
+            self.update(); return
+        step = 1.0
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier: step = 5.0
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier: step = 20.0
+        if k == QtCore.Qt.Key.Key_Left:  self.points[self._active_idx, 0] -= step
+        if k == QtCore.Qt.Key.Key_Right: self.points[self._active_idx, 0] += step
+        if k == QtCore.Qt.Key.Key_Up:    self.points[self._active_idx, 1] -= step
+        if k == QtCore.Qt.Key.Key_Down:  self.points[self._active_idx, 1] += step
+        # Q/E rotieren, W/S skalieren minimal
+        if k == QtCore.Qt.Key.Key_Q: self.board_rotate -= 0.2
+        if k == QtCore.Qt.Key.Key_E: self.board_rotate += 0.2
+        if k == QtCore.Qt.Key.Key_W: self.board_scale  += 0.001
+        if k == QtCore.Qt.Key.Key_S: self.board_scale  -= 0.001
+        self.update()
+
 
 
 # -------------- Kamera-Panel (eine Kachel) --------------
-class CamPanel(QFrame):
-    """Eine Kalibrier-Kachel: Kameraauswahl, optionales Entzerren, Live-View mit DragBoard."""
-
+class CamPanel(QtWidgets.QFrame):
     def __init__(self, cam_id_guess: int):
         super().__init__()
-        self.setFrameShape(QFrame.Shape.StyledPanel)
+        self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
 
-        # Bildfläche
         self.view = DragBoard()
-
-        # --- Leiste unten -----------------------------------------------------
-        bar = QtWidgets.QHBoxLayout()
-
-        # Kamera-Dropdown (kein Autostart)
         self.cmb = QtWidgets.QComboBox()
         self.cmb.addItem("Select camera", None)
+        self.cmb.currentIndexChanged.connect(self._on_select)
+
+        # --- Lens & Overlay Controls ---
+        self.cb_undist = QtWidgets.QCheckBox("Undistort")
+        self.k1 = QtWidgets.QDoubleSpinBox(); self.k1.setRange(-0.50, 0.50); self.k1.setDecimals(3); self.k1.setSingleStep(0.01); self.k1.setValue(0.00); self.k1.setPrefix("k1 ")
+        self.k2 = QtWidgets.QDoubleSpinBox(); self.k2.setRange(-0.50, 0.50); self.k2.setDecimals(3); self.k2.setSingleStep(0.01); self.k2.setValue(0.00); self.k2.setPrefix("k2 ")
+
+        self.alpha = QtWidgets.QSlider(QtCore.Qt.Orientation.Horizontal)
+        self.alpha.setRange(0, 100); self.alpha.setValue(int(self.view.alpha * 100))
+        self.scal = QtWidgets.QDoubleSpinBox(); self.scal.setRange(0.95, 1.05); self.scal.setDecimals(3); self.scal.setSingleStep(0.001); self.scal.setValue(1.000); self.scal.setPrefix("scale ")
+        self.rot  = QtWidgets.QDoubleSpinBox(); self.rot.setRange(-15.0, 15.0); self.rot.setDecimals(1); self.rot.setSingleStep(0.1); self.rot.setValue(0.0); self.rot.setPrefix("rot ")
+
+        # Bottom bar
+        bar = QtWidgets.QHBoxLayout()
         bar.addWidget(self.cmb, 1)
+        bar.addWidget(self.cb_undist)
+        bar.addWidget(self.k1); bar.addWidget(self.k2)
+        bar.addWidget(QtWidgets.QLabel("α")); bar.addWidget(self.alpha)
+        bar.addWidget(self.scal); bar.addWidget(self.rot)
 
-        # Entzerrung (approx. radial: k1/k2)
-        self.cb_undist = QtWidgets.QCheckBox("Approx. distortion")
-        self.k1 = QtWidgets.QDoubleSpinBox()
-        self.k1.setRange(-0.50, 0.50)
-        self.k1.setDecimals(3)
-        self.k1.setSingleStep(0.01)
-        self.k1.setValue(0.00)
-        self.k1.setPrefix("k1 ")
-        self.k2 = QtWidgets.QDoubleSpinBox()
-        self.k2.setRange(-0.50, 0.50)
-        self.k2.setDecimals(3)
-        self.k2.setSingleStep(0.01)
-        self.k2.setValue(0.00)
-        self.k2.setPrefix("k2 ")
-        bar.addWidget(self.cb_undist, 0)
-        bar.addWidget(self.k1, 0)
-        bar.addWidget(self.k2, 0)
-
-        # Layout zusammensetzen
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(self.view, 1)
         lay.addLayout(bar)
 
-        # Status
+        # Live capture
         self.cap: Optional[cv2.VideoCapture] = None
-        self.res = (1280, 720)
-        self.fps = 30
+        self.res = (1280, 720); self.fps = 30
 
-        # Signals
-        self.cmb.currentIndexChanged.connect(self._on_select)
+        # Wiring
+        self.alpha.valueChanged.connect(lambda v: self.view.set_alpha(v / 100.0))
+        self.scal.valueChanged.connect(self.view.set_board_scale)
+        self.rot.valueChanged.connect(self.view.set_board_rotate)
         self.cb_undist.stateChanged.connect(lambda *_: self.view.update())
         self.k1.valueChanged.connect(lambda *_: self.view.update())
         self.k2.valueChanged.connect(lambda *_: self.view.update())
 
-    # --- Kamera Handling ------------------------------------------------------
     def _on_select(self, _):
         cam = self.cmb.currentData()
         if cam is None:
-            self.stop()
-            return
+            self.stop(); return
         self.start(int(cam))
 
     def start(self, cam_id: int):
         self.stop()
         cap = open_capture(cam_id, self.res, self.fps)
         if cap is None:
-            QtWidgets.QMessageBox.warning(
-                self, "Camera", f"Cannot open camera {cam_id} on any backend."
-            )
+            QtWidgets.QMessageBox.warning(self, "Camera", f"Cannot open camera {cam_id} on any backend.")
             return
         self.cap = cap
 
     def stop(self):
         if self.cap is not None:
-            self.cap.release()
-            self.cap = None
+            self.cap.release(); self.cap = None
         self.view.set_frame(None)
 
     def tick(self):
-        if not self.cap:
-            return
+        if not self.cap: return
         ok, frame = self.cap.read()
-        if not ok:
+        if ok:
+            if self.cb_undist.isChecked():
+                frame = undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
+            self.view.set_frame(frame.copy())
+        else:
             self.view.set_frame(None)
-            return
-        if self.cb_undist.isChecked():
-            frame = undistort_simple(
-                frame, float(self.k1.value()), float(self.k2.value())
-            )
-        self.view.set_frame(frame.copy())
 
     def set_globals(self, res: tuple[int, int], fps: int):
-        self.res = res
-        self.fps = fps
+        self.res = res; self.fps = fps
         if self.cap:
             idx = self.cmb.currentData()
             if idx is not None:
                 self.start(int(idx))
 
-    # --- Zugriff für Save/Export ---------------------------------------------
     def current_h(self) -> Optional[np.ndarray]:
         return self.view.homography()
 
     def current_points(self) -> List[List[float]]:
         return self.view.points.tolist()
+
 
 
 # -------------- Main-Dialog --------------
