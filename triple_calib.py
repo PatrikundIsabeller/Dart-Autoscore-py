@@ -581,7 +581,7 @@ class CamPanel(QtWidgets.QFrame):
         self.cap = cap
         self._last_center = None
         self._last_radius = None
-        self.view.set_wedge_poly(None)  # Tortenstück zurücksetzen
+       # self.view.set_wedge_poly(None)  # Tortenstück zurücksetzen
 
     def stop(self):
         if self.cap is not None:
