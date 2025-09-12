@@ -503,6 +503,107 @@ class DragBoard(QtWidgets.QLabel):
         self.pointsChanged.emit()
         self.update()
 
+    # ===== warpPolar-basierter Rotations-Estimator (mod 18°) =====
+
+    def _wrap_deg(x: float) -> float:
+        # -> [-180, 180)
+        while x >= 180.0:
+            x -= 360.0
+        while x < -180.0:
+            x += 360.0
+        return x
+
+    def _wrap_mod_deg(x: float, mod: float = 18.0) -> float:
+        # wrap in (-mod/2, +mod/2]
+        y = (x + mod / 2.0) % mod - mod / 2.0
+        # Pack die Grenze bei exakt -mod/2 auf +mod/2, damit es symm. wirkt
+        return y if y != -mod / 2.0 else mod / 2.0
+
+    def estimate_rotation_mod18(
+        gray: np.ndarray,
+        center: tuple[float, float],
+        r_equiv_px: float,
+        rel_r0: float = REL["triple_inner"],
+        rel_r1: float = REL["triple_outer"],
+        ang_res: int = 1440,  # 0.25° Auflösung
+        rad_res: int = 256,
+    ) -> tuple[float, float]:
+        """
+        Liefert (rot_offset_deg_mod18, confidence).
+        Idee:
+        1) warpPolar um 'center'
+        2) Summiere Kantenenergie im Triple-Band → Winkelprofil A(θ)
+        3) FFT: 20. Harmonische → Phase → Segmentgrenzen-Phase
+        4) Referenzgrenze 'oben' (20/1) liegt bei -81° (=-90° + 9°) → delta = θ_bound - (-81°), modulo 18°
+        """
+        cx, cy = center
+        # Sicherheitsradius: etwas größer als Double-Outer
+        maxR = max(32.0, float(r_equiv_px) * (REL["double_outer"] * 1.15))
+
+        # Polar-Unwrap: Breite=ang_res (Winkel 0..2π), Höhe=rad_res (Radius 0..maxR)
+        polar = cv2.warpPolar(
+            gray,
+            (ang_res, rad_res),
+            (float(cx), float(cy)),
+            maxR,
+            flags=cv2.WARP_POLAR_LINEAR + cv2.WARP_FILL_OUTLIERS,
+        )
+        # radialer Indexbereich für Triple-Band
+        r0_pix = float(r_equiv_px) * rel_r0
+        r1_pix = float(r_equiv_px) * rel_r1
+        # in Zeilenindizes der Polar-Map umrechnen
+        i0 = int(np.clip(r0_pix / maxR * (rad_res - 1), 0, rad_res - 1))
+        i1 = int(np.clip(r1_pix / maxR * (rad_res - 1), 0, rad_res - 1))
+        if i1 <= i0:
+            i1 = min(rad_res - 1, i0 + 1)
+
+        band = polar[i0:i1, :]  # shape: [rad, ang]
+        # Kantenenergie entlang Radius → |∂/∂r|
+        if band.shape[0] >= 2:
+            d = np.abs(np.diff(band.astype(np.float32), axis=0))
+            A = d.sum(axis=0)  # Winkelprofil
+        else:
+            A = band.astype(np.float32).sum(axis=0)
+
+        # glätten + zentrieren
+        A = cv2.GaussianBlur(A[None, :], (1, 31), 0).ravel()
+        A = A - float(A.mean() if A.size else 0.0)
+
+        # FFT auf A; 20. harmonische hat 20 Peaks (Sektorgrenzen)
+        N = int(A.size)
+        if N < 64:
+            return 0.0, 0.0
+        F = np.fft.rfft(A)
+        k = 20  # 20 Sektoren
+        if k >= F.size:
+            # zu wenig Auflösung – unwahrscheinlich bei ang_res=1440, aber dennoch:
+            return 0.0, 0.0
+        c20 = F[k]
+        # Phase → θ_bound in Radiant bezogen auf +x (CCW), passend zu unserem Winkelmodell
+        theta_bound_rad = -np.angle(c20) / 20.0
+        theta_bound_deg = np.degrees(theta_bound_rad)
+        # auf [-180,180) mappen
+        theta_bound_deg = _wrap_deg(theta_bound_deg)
+
+        # Referenz: „obere“ Grenze 20/1 liegt bei -81° (=-90°+9°)
+        ref_top_boundary_deg = -81.0
+
+        # Rotations-Offset, modulo 18° (wir wollen nur die Lage im 18°-Raster)
+        delta = theta_bound_deg - ref_top_boundary_deg
+        rot_mod18 = _wrap_mod_deg(delta, 18.0)  # → in (-9..+9]
+
+        # Confidence: Anteil der 20. Harmonischen an der Gesamtenergie niedriger Harmonischen
+        # (robuste, normierte Metrik – heuristisch skaliert)
+        mag = np.abs(F)
+        # Energie bis z.B. 40 (ohne DC und ohne 20 selbst, dann fügen wir 20 hinzu)
+        upper = min(40, mag.size - 1)
+        denom = mag[1:upper].sum() + 1e-6
+        conf = float(np.abs(c20) / denom)
+        # sanft nach [0..1] drücken
+        conf = max(0.0, min(1.0, conf / 3.0))
+
+        return float(rot_mod18), conf
+
 
 # ===================
 # 6) CamPanel (1 Cam)
@@ -644,9 +745,11 @@ class CamPanel(QtWidgets.QFrame):
     # ---------- Auto (grober Seed für 4 Punkte) ----------
     def auto_calibrate(self):
         """
-        Grobe Auto-Punktvorschläge: nutzt einfache Kreis/ellipse-Annäherung,
-        setzt die 4 Punkte (oben/rechts/unten/links) auf den Double-Outer.
-        Danach verfeinert die DragBoard-Homography() ohnehin noch subpixel.
+        Auto-Initialisierung:
+        - Ellipse fürs Board fitten → center, Achsen, Winkel
+        - warpPolar/FFT → Rotations-Offset (mod 18°) & Confidence
+        - vier Bildpunkte (oben/rechts/unten/links) auf Double-Outer setzen (mit +9°-Shift)
+        - DragBoard.homography() zieht sie danach subpixel-genau auf die Kante
         """
         if not self.cap:
             cam = self.cmb.currentData()
@@ -669,7 +772,7 @@ class CamPanel(QtWidgets.QFrame):
         gray = cv2.GaussianBlur(gray, (5, 5), 1.2)
         edges = cv2.Canny(gray, 60, 140)
 
-        # Ellipse fitten aus Kanten (Fallback auf größten Kreis)
+        # Ellipse fitten (Fallback: größte Kontur)
         cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
         best = None
         best_score = -1
@@ -689,13 +792,16 @@ class CamPanel(QtWidgets.QFrame):
             score = area * (0.5 + 0.5 * ar)
             if score > best_score:
                 best_score, best = score, ((cx, cy), (MA, ma), ang)
+
         if best is None:
             QtWidgets.QMessageBox.warning(self, "Auto", "Board-Ellipse nicht gefunden.")
             return
 
         (cx, cy), (MA, ma), ang = best
         a, b = MA / 2.0, ma / 2.0
+        r_equiv = 0.5 * (a + b)
 
+        # Ellipsenradialfunktion (für saubere Double-Outer-Projektion)
         def ellipse_radius_at(img_angle_rad: float, theta_deg: float) -> float:
             theta = np.deg2rad(theta_deg)
             phi_p = img_angle_rad - theta
@@ -703,22 +809,30 @@ class CamPanel(QtWidgets.QFrame):
             den = (c * c) / (a * a) + (s * s) / (b * b)
             return 0.0 if den <= 1e-12 else 1.0 / np.sqrt(den)
 
-        # 4 Zielwinkel in Bildkoordinaten (oben/rechts/unten/links) an *Grenzlinien* (+9°)
-        desired_deg = [
-            -81.0,
-            9.0,
-            99.0,
-            -171.0,
-        ]  # (-90 + 9), (0+9), (90+9), (180+9-360)
+        # === warpPolar-Estimator: Rotations-Offset modulo 18° ===
+        rot_mod18, conf = estimate_rotation_mod18(gray, (cx, cy), r_equiv)
+
+        # Basis-Grenzwinkel (oben/rechts/unten/links) sind -81°, 9°, 99°, -171° – drehe um rot_mod18
+        base = np.array([-81.0, 9.0, 99.0, -171.0], dtype=np.float32) + float(rot_mod18)
+
+        # Bildpunkte auf Double-Outer entlang der (elliptischen) Richtung
         pts = []
-        for deg in desired_deg:
+        for deg in base:
             phi = np.deg2rad(deg)
-            r = ellipse_radius_at(phi, ang) * REL["double_outer"]  # Double-Outer Anteil
+            r = ellipse_radius_at(phi, ang) * REL["double_outer"]
             x = cx + r * np.cos(phi)
             y = cy + r * np.sin(phi)
             pts.append([x, y])
 
         self.view.set_points(np.array(pts, dtype=np.float32))
+
+        # Optionaler UI-Hinweis bei schwacher Confidence
+        if conf < 0.35:
+            QtWidgets.QToolTip.showText(
+                self.mapToGlobal(self.rect().center()),
+                f"Auto-Rotation unsicher (conf={conf:.2f}). Bitte Punkte prüfen/feinnudgen.",
+                self,
+            )
 
     def _nudge_wedge(self, delta_deg: float):
         """Dreht *nur* das Wedge-Template (±18° / Feinnudge)."""
