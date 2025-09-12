@@ -1,4 +1,4 @@
-# triple_calib.py – 3-Kamera-Kalibrierung (PyQt6) mit Drag-Points + Save zu /calibration
+# triple_calib.py – 3-Kamera-Kalibrierung (PyQt6) – autodarts 4-Punkt, Welt→Bild Homographie
 from __future__ import annotations
 import os, json
 from typing import List, Tuple, Optional
@@ -7,178 +7,123 @@ import cv2
 import numpy as np
 import requests
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtWidgets import QFrame
+
+# =========================
+# 1) Geometrie & Konstanten
+# =========================
 
 AGENT_URL = os.environ.get("TRIPLEONE_AGENT", "http://127.0.0.1:4700")
 
-DEFAULT_RINGS = {
-    "double_outer": 0.995,
-    "double_inner": 0.940,
-    "triple_outer": 0.620,
-    "triple_inner": 0.540,
+# autodarts-Relative Radien (unbedingt beibehalten)
+REL = {
     "bull_outer": 0.060,
     "bull_inner": 0.015,
+    "triple_outer": 0.620,
+    "triple_inner": 0.540,
+    "double_inner": 0.940,
+    "double_outer": 0.995,
 }
+R_BOARD_MM = 451.0 / 2.0  # 225.5 mm
+R_DO_MM = REL["double_outer"] * R_BOARD_MM
 
-# ---------- Auto-Detect & Auto-Homography ----------
+# Sektorreihenfolge im Uhrzeigersinn ab oben
+SECTOR_ORDER = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
 
-def _detect_outer_ellipse(frame: np.ndarray) -> Optional[Tuple[Tuple[float,float], Tuple[float,float], float]]:
+
+def world_points_autodarts_mm() -> np.ndarray:
     """
-    Liefert (center(x,y), axes(major,minor), angle_deg) der größten 'ring-ähnlichen' Ellipse.
-    Robust genug für Soft-/Steeldart mit Rot/Grün; fällt zurück auf Kanten, wenn Farben schwach.
+    4 Welt-Referenzpunkte (mm) auf dem Double-Outer – Kardinalachsen:
+      1: oben (20-1)    2: rechts (6-10)
+      3: unten (3-19)   4: links  (11-14)
+    Reihenfolge: [oben, rechts, unten, links]
     """
-    if frame is None or frame.size == 0:
-        return None
-
-    work = frame.copy()
-    # 1) leichtes entrauschen / Kontrast
-    work = cv2.GaussianBlur(work, (5,5), 0)
-    hsv = cv2.cvtColor(work, cv2.COLOR_BGR2HSV)
-
-    # 2) Rot maskieren (2 Bereiche in HSV)
-    low1 = np.array([0, 80, 60]);   high1 = np.array([12, 255, 255])
-    low2 = np.array([170, 80, 60]); high2 = np.array([179, 255, 255])
-    mask_r = cv2.inRange(hsv, low1, high1) | cv2.inRange(hsv, low2, high2)
-
-    # 3) Kanten als Fallback kombinieren
-    g = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
-    g = cv2.equalizeHist(g)
-    edges = cv2.Canny(g, 60, 140)
-    mask = cv2.bitwise_or(mask_r, edges)
-
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5,5), np.uint8), iterations=2)
-
-    cnts, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-    best = None; best_score = -1.0
-    H, W = mask.shape[:2]
-    area_img = H * W
-
-    for c in cnts:
-        if len(c) < 20: 
-            continue
-        area = cv2.contourArea(c)
-        if area < 0.01 * area_img:
-            continue
-        try:
-            (cx, cy), (MA, ma), ang = cv2.fitEllipse(c)   # major, minor
-        except cv2.error:
-            continue
-        # Score: groß + möglichst rund
-        ar = min(MA, ma) / max(MA, ma)  # 1 = rund
-        score = area * (0.5 + 0.5*ar)
-        if score > best_score:
-            best_score = score
-            best = ((cx, cy), (MA, ma), ang)
-
-    return best  # oder None
+    return np.array(
+        [[0.0, -R_DO_MM], [R_DO_MM, 0.0], [0.0, R_DO_MM], [-R_DO_MM, 0.0]],
+        dtype=np.float32,
+    )
 
 
-def _ellipse_rad_at_angle(a: float, b: float, phi_img: float, theta_deg: float) -> float:
+def refine_points_on_double_outer(
+    gray: np.ndarray, pts_img: np.ndarray, search_px: int = 6
+) -> np.ndarray:
     """
-    Abstand vom Ellipsenzentrum zur Ellipsenkante entlang 'phi_img' (Bildwinkel),
-    gegeben Halbachsen a,b und Ellipsendrehung theta (Grad).
-    Formel: r = 1 / sqrt((cos(φ')^2 / a^2) + (sin(φ')^2 / b^2)), wobei φ' = φ - θ.
+    Subpixel-Refinement: verschiebt jeden Punkt radial (vom Mittelpunkt aus) auf das Maximum
+    der Bildintensitäts-Gradienten (Double-Outer-Kante).
     """
-    theta = np.deg2rad(theta_deg)
-    phi_p = phi_img - theta
-    c, s = np.cos(phi_p), np.sin(phi_p)
-    den = (c*c)/(a*a) + (s*s)/(b*b)
-    if den <= 1e-12:
-        return 0.0
-    return 1.0 / np.sqrt(den)
-
-
-def _auto_rotation_offset(gray: np.ndarray, center: Tuple[float,float], radius_px: float) -> float:
-    """
-    Schätzt den Rotationswinkel (Grad), bei dem ein 20-Segmente-Template maximal korreliert.
-    Wir sampeln eine Ring-Intensität (zwischen Triple und Double), bauen ein 360-Bin-Profil
-    und korrelieren mit einer 20er-Kammfunktion.
-    """
+    assert gray.ndim == 2
+    assert pts_img.shape == (4, 2)
+    # Mittelpunkt grob als Mittel der 4 Punkte
+    c = np.mean(pts_img, axis=0)
+    gx = cv2.Sobel(gray, cv2.CV_32F, 1, 0, ksize=3)
+    gy = cv2.Sobel(gray, cv2.CV_32F, 0, 1, ksize=3)
     h, w = gray.shape[:2]
-    cx, cy = center
-    r1 = radius_px * 0.62    # ungefähr triple_outer
-    r2 = radius_px * 0.95    # ungefähr double_outer
-    r = (r1 + r2) / 2.0
 
-    # 360 Samples entlang des Rings
-    prof = np.zeros(360, dtype=np.float32)
-    for deg in range(360):
-        phi = np.deg2rad(deg)
-        x = int(cx + r * np.cos(phi))
-        y = int(cy + r * np.sin(phi))
-        if 0 <= x < w and 0 <= y < h:
-            prof[deg] = gray[y, x]
-
-    # Hochpass / normalisieren
-    prof = (prof - np.median(prof))
-    prof /= (np.std(prof) + 1e-6)
-
-    # 20er-Kamm: Peaks alle 18°
-    # Wir nehmen einfach einen Sinus auf 20/2 = 10 Zyklen (approx. Kamm) – stabiler als harte Diracs
-    t = np.arange(360, dtype=np.float32) * np.pi / 180.0
-    template = np.cos(10 * 2 * np.pi * t / (2*np.pi))  # 10 Perioden in 360°
-    # FFT-Korrelation
-    fft_corr = np.fft.ifft(np.fft.fft(prof) * np.conj(np.fft.fft(template))).real
-    best_deg = int(np.argmax(fft_corr) % 360)
-
-    # Wir wollen, dass Segment 20 "oben" (−90°) liegt → Offset umrechnen:
-    # Unser Grid startet bei 90° (oben) → Ausrichtung = (90 - best_deg)
-    rot = 90 - best_deg
-    # Normalisieren in [-180, 180]
-    while rot > 180: rot -= 360
-    while rot < -180: rot += 360
-    return float(rot)
+    out = []
+    for x, y in pts_img:
+        v = np.array([x, y], dtype=np.float32) - c
+        n = float(np.linalg.norm(v) + 1e-6)
+        u = v / n
+        best, best_s = (x, y), -1e9
+        for d in range(-search_px, search_px + 1):
+            xx = int(np.clip(x + u[0] * d, 1, w - 2))
+            yy = int(np.clip(y + u[1] * d, 1, h - 2))
+            s = gx[yy, xx] * u[0] + gy[yy, xx] * u[1]
+            if s > best_s:
+                best_s, best = float(s), (float(xx), float(yy))
+        out.append(best)
+    return np.array(out, dtype=np.float32)
 
 
-def auto_calibrate_from_frame(frame: np.ndarray) -> Optional[dict]:
+def compute_H_world2img(points_img_xy: np.ndarray) -> np.ndarray:
     """
-    Findet äußere Ellipse, schätzt Rotation (20 nach oben),
-    setzt 4 Punkte passend zur Rotation auf die Kardinalpunkte
-    (TopLeft, TopRight, BottomRight, BottomLeft) und berechnet H.
-    Rückgabe: {"points": [(x,y)*4], "H": 3x3, "rotation_deg": float}
+    Welt→Bild Homographie aus den 4 Bildpunkten (oben/rechts/unten/links) auf dem Double-Outer.
     """
-    det = _detect_outer_ellipse(frame)
-    if det is None:
-        return None
-    (cx, cy), (MA, ma), ang = det
-    a, b = MA / 2.0, ma / 2.0  # Halbachsen
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    rot_est = _auto_rotation_offset(gray, (cx, cy), max(a, b))  # +rot => Grid gegen Uhr, 20 nach oben
-
-    # --- Winkel (Bildkoordinaten) für die vier Ecken des 600x600-Boards:
-    # Mapping (src -> dst):
-    #   (0,0)     -> Top-Left     -> 135° - rot
-    #   (600,0)   -> Top-Right    ->  45° - rot
-    #   (600,600) -> Bottom-Right -> -45° (oder 315°) - rot
-    #   (0,600)   -> Bottom-Left  -> 225° - rot
-    def corner_point(angle_deg: float) -> List[float]:
-        phi = np.deg2rad(angle_deg)
-        r = _ellipse_rad_at_angle(a, b, phi, ang)
-        x = cx + r * np.cos(phi)
-        y = cy + r * np.sin(phi)
-        return [float(x), float(y)]
-
-    angles_deg = [
-        135.0 - rot_est,   # TL
-        45.0  - rot_est,   # TR
-        -45.0 - rot_est,   # BR (== 315° - rot)
-        225.0 - rot_est    # BL
-    ]
-    dst = [corner_point(d) for d in angles_deg]
-    dst_np = np.array(dst, dtype=np.float32)
-
-    src = np.array([[0, 0], [600, 0], [600, 600], [0, 600]], dtype=np.float32)
-
-    H, ok = cv2.findHomography(src, dst_np, 0)
+    assert points_img_xy.shape == (4, 2)
+    pts_world = world_points_autodarts_mm()
+    H, _ = cv2.findHomography(
+        pts_world, points_img_xy, method=0
+    )  # 4 exakt → kein RANSAC
     if H is None:
-        return None
-
-    return {"points": dst, "H": H, "rotation_deg": float(rot_est)}
-
+        raise ValueError("Homography (Welt→Bild) fehlgeschlagen")
+    return H
 
 
-# ---------------- HTTP ----------------
+def M_tplPx_to_world_mm(
+    R_tpl_px: float = 300.0, R_board_mm: float = R_BOARD_MM
+) -> np.ndarray:
+    """
+    Projektivmatrix: Template-Pixel (600×600, Mittelpunkt (300,300)) → Welt (mm, Mittelpunkt (0,0)).
+    """
+    s = R_board_mm / R_tpl_px  # mm/px (Template→mm)
+    t = -s * R_tpl_px  # verschiebt (300,300) → (0,0)
+    return np.array([[s, 0, t], [0, s, t], [0, 0, 1]], dtype=np.float64)
+
+
+def templatePx_to_image_H(H_world2img: np.ndarray) -> np.ndarray:
+    """
+    Kombinierte Homographie: Template(600px) → Bild(px), via Welt(mm).
+    """
+    return H_world2img @ M_tplPx_to_world_mm()
+
+
+def compute_homographies_from_points(gray: np.ndarray, pts_img_xy: np.ndarray):
+    """
+    Bequem-Funktion:
+      - verfeinert die 4 Punkte auf der Double-Outer-Kante,
+      - berechnet H_world2img und H_tplPx2img.
+    Rückgabe: (H_world2img, H_tplPx2img, pts_refined)
+    """
+    pts_ref = refine_points_on_double_outer(gray, pts_img_xy.astype(np.float32))
+    H_world = compute_H_world2img(pts_ref)
+    H_tpl = templatePx_to_image_H(H_world)
+    return H_world, H_tpl, pts_ref
+
+
+# ===========
+# 2) HTTP I/O
+# ===========
+
+
 def fetch_calibration() -> dict:
     try:
         r = requests.get(AGENT_URL.rstrip("/") + "/calibration", timeout=1.5)
@@ -193,7 +138,75 @@ def save_calibration(payload: dict) -> None:
     r.raise_for_status()
 
 
-# -------------- Camera utils --------------
+# ===========================
+# 3) Overlay (Template 600px)
+# ===========================
+
+
+def make_grid600_image(include_numbers=True) -> np.ndarray:
+    """
+    Erzeugt 600×600 Overlay (BGR):
+      - Ringe (autodarts-Radien)
+      - 20 Sektor-Grenzen (k*18°)
+      - Zahlen in **Segmentmitte** (+9°), leicht außerhalb Double-Outer
+    """
+    img = np.zeros((600, 600, 3), dtype=np.uint8)
+    cx = cy = 300
+    R = 300.0
+
+    teal = (0, 255, 255)
+
+    def circ(rel, color, thickness=2):
+        cv2.circle(img, (cx, cy), int(rel * R), color, thickness, cv2.LINE_AA)
+
+    # Ringe
+    circ(REL["double_outer"], teal, 2)
+    circ(REL["double_inner"], teal, 1)
+    circ(REL["triple_outer"], teal, 2)
+    circ(REL["triple_inner"], teal, 1)
+    circ(REL["bull_outer"], (255, 255, 0), 1)
+    circ(REL["bull_inner"], (255, 0, 0), -1)
+
+    # Sektorgrenzen
+    for k in range(20):
+        ang_deg = -90 + k * 18
+        t = np.deg2rad(ang_deg)
+        r0 = REL["bull_outer"] * R
+        r1 = REL["double_outer"] * R
+        x0, y0 = int(cx + r0 * np.cos(t)), int(cy + r0 * np.sin(t))
+        x1, y1 = int(cx + r1 * np.cos(t)), int(cy + r1 * np.sin(t))
+        cv2.line(img, (x0, y0), (x1, y1), teal, 1, cv2.LINE_AA)
+
+    # Zahlen mittig im Segment (+9°)
+    if include_numbers:
+        rel_number = REL["double_outer"] * 1.06  # leicht außerhalb
+        r_txt = rel_number * R
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        for k, num in enumerate(SECTOR_ORDER):
+            ang_deg = -90 + (k * 18 + 9)
+            t = np.deg2rad(ang_deg)
+            x = cx + r_txt * np.cos(t)
+            y = cy + r_txt * np.sin(t)
+            text = str(num)
+            scale = 0.55
+            thick = 2
+            (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
+            org = (int(x - tw / 2), int(y + th / 2))
+            cv2.putText(img, text, org, font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
+            cv2.putText(
+                img, text, org, font, scale, (255, 255, 255), thick, cv2.LINE_AA
+            )
+    return img
+
+
+GRID_600 = make_grid600_image(True)
+
+
+# ==================
+# 4) Camera Utilities
+# ==================
+
+
 def open_capture(cam_id: int, res=(1280, 720), fps: int = 30):
     """Versucht MSMF → DSHOW → ANY. Gibt geöffnetes cap oder None zurück."""
     backends = [
@@ -225,7 +238,6 @@ def enumerate_cameras(max_idx: int = 10) -> list[int]:
     return found
 
 
-# -------------- Image utils --------------
 def cvimg_to_qpix(img: np.ndarray) -> QtGui.QPixmap:
     if img is None or img.size == 0:
         return QtGui.QPixmap()
@@ -234,65 +246,6 @@ def cvimg_to_qpix(img: np.ndarray) -> QtGui.QPixmap:
     return QtGui.QPixmap.fromImage(
         QtGui.QImage(rgb.data, w, h, ch * w, QtGui.QImage.Format.Format_RGB888)
     )
-
-
-def draw_dartboard_grid(size: int = 600, rings: dict | None = None) -> np.ndarray:
-    """Board-Template in 600x600 mit korrekten Ringradien."""
-    if rings is None:
-        rings = DEFAULT_RINGS
-
-    img = np.zeros((size, size, 3), dtype=np.uint8)
-    cx = cy = size // 2
-    R = size // 2
-
-    white = (255, 255, 255)
-    red   = (0, 0, 255)
-    green = (0, 255, 0)
-    yellow= (0, 255, 255)
-    blue  = (255, 0, 0)
-
-    # Double-Ring
-    cv2.circle(img, (cx, cy), int(R * rings["double_outer"]), red,   2, cv2.LINE_AA)
-    cv2.circle(img, (cx, cy), int(R * rings["double_inner"]), red,   2, cv2.LINE_AA)
-
-    # Triple-Ring
-    cv2.circle(img, (cx, cy), int(R * rings["triple_outer"]), green, 2, cv2.LINE_AA)
-    cv2.circle(img, (cx, cy), int(R * rings["triple_inner"]), green, 2, cv2.LINE_AA)
-
-    # Bull / Bullseye
-    cv2.circle(img, (cx, cy), int(R * rings["bull_inner"]),   blue,  -1, cv2.LINE_AA)   # inner bull
-    cv2.circle(img, (cx, cy), int(R * rings["bull_outer"]),   yellow,2, cv2.LINE_AA)   # outer bull
-
-    # Segmente + Zahlen (20-Start oben; 18° pro Segment)
-    nums = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5]
-    for i in range(20):
-        ang = np.deg2rad(90 - i * 18)  # 90° = oben
-        r0 = R * rings["bull_outer"]
-        r1 = R * rings["double_outer"]
-        x0 = int(cx + r0 * np.cos(ang)); y0 = int(cy - r0 * np.sin(ang))
-        x1 = int(cx + r1 * np.cos(ang)); y1 = int(cy - r1 * np.sin(ang))
-        cv2.line(img, (x0, y0), (x1, y1), white, 1, cv2.LINE_AA)
-
-        # Zahlen zwischen double_outer und Boardrand
-        txt = str(nums[i])
-        rad = R * 1.02
-        tx = int(cx + rad * np.cos(ang)); ty = int(cy - rad * np.sin(ang))
-        sz = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)[0]
-        cv2.putText(img, txt, (tx - sz[0] // 2, ty + sz[1] // 2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, white, 2, cv2.LINE_AA)
-    return img
-
-# ---- NACH draw_dartboard_grid(...), VOR DragBoard ----
-# Versuche Ring-Radien aus dem Agent zu holen, sonst Defaults
-try:
-    _rings = fetch_calibration().get("rings", DEFAULT_RINGS)
-except Exception:
-    _rings = DEFAULT_RINGS
-
-GRID_600 = draw_dartboard_grid(600, _rings)
-# ---------------------------------------------
-
-
 
 
 def undistort_simple(frame: np.ndarray, k1: float, k2: float):
@@ -308,97 +261,125 @@ def undistort_simple(frame: np.ndarray, k1: float, k2: float):
     return cv2.undistort(frame, K, D, None, newK)
 
 
-# -------------- Drag widget (single feed) --------------
+# =======================
+# 5) DragBoard (Overlay UI)
+# =======================
+
+
 class DragBoard(QtWidgets.QLabel):
-    """Liveframe + warped Grid + 4 draggable Punkte (TL,TR,BR,BL) mit Feinjustage.
-       Wedge (20er-Sektor) wird im 600x600-Template erzeugt und via Homographie gemappt.
     """
+    Liveframe + warped Grid + 4 draggable Punkte (oben,rechts,unten,links) auf Double-Outer.
+    Wedge (20er-Sektor) wird im 600x600-Template erzeugt und via Homographie gemappt.
+    """
+
+    pointsChanged = QtCore.pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
         self.setMinimumSize(360, 220)
-        self.setStyleSheet("QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}")
+        self.setStyleSheet(
+            "QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}"
+        )
 
-        # --- State (einmalig, keine Duplikate!) ---
+        # State
         self.frame: Optional[np.ndarray] = None
-        self.points = np.array([[100, 100], [540, 100], [540, 380], [100, 380]], dtype=np.float32)
-        self.M: Optional[np.ndarray] = None
+        # Startpunkte: grob um das Bild platziert
+        self.points = np.array(
+            [[300, 120], [540, 300], [300, 480], [60, 300]], dtype=np.float32
+        )
         self._drag_idx = -1
         self._active_idx = 0
 
-        # Overlay/Board-Feinjustage
+        # Homographien
+        self.H_world2img: Optional[np.ndarray] = None  # für Speichern/Agent
+        self.H_tplPx2img: Optional[np.ndarray] = None  # fürs Overlay
+
+        # Overlay Darstellung
         self.alpha = 0.65
-        self.board_scale = 1.000
-        self.board_rotate = 0.0  # Grad
 
-        # Wedge als TEMPLATE-Polygon (600x600); wird per Homographie in Bild gemappt
+        # Wedge im Template
         self._wedge_tmpl: Optional[np.ndarray] = None  # (N,1,2) float32
-        self._wedge_angle_deg: float = 90.0           # 20 oben
+        self._wedge_angle_deg: float = 90.0  # 20 oben
 
-    # ---------- Wedge-Template ----------
-    def set_wedge_template(self, angle_up_deg: float = 90.0, spread_deg: float = 18.0,
-                           r_in: float = DEFAULT_RINGS["bull_outer"],
-                           r_out: float = DEFAULT_RINGS["double_outer"]) -> None:
-        """Erzeugt das 20°-Wedge im 600x600-Template (Zentrum (300,300))."""
+    # ----- Wedge (Template) -----
+    def set_wedge_template(
+        self,
+        angle_up_deg: float = 90.0,
+        spread_deg: float = 18.0,
+        r_in: float = REL["bull_outer"],
+        r_out: float = REL["double_outer"],
+    ) -> None:
         self._wedge_angle_deg = angle_up_deg
         cx = cy = 300.0
         R = 300.0
-        a0 = np.deg2rad(angle_up_deg - spread_deg/2.0)
-        a1 = np.deg2rad(angle_up_deg + spread_deg/2.0)
-
-        outer = [(cx + R*r_out*np.cos(t), cy - R*r_out*np.sin(t)) for t in np.linspace(a0, a1, 24)]
-        inner = [(cx + R*r_in *np.cos(t), cy - R*r_in *np.sin(t)) for t in np.linspace(a1, a0, 24)]
-        poly  = np.array(outer + inner, dtype=np.float32).reshape(-1,1,2)
-        self._wedge_tmpl = poly
+        a0 = np.deg2rad(angle_up_deg - spread_deg / 2.0)
+        a1 = np.deg2rad(angle_up_deg + spread_deg / 2.0)
+        outer = [
+            (cx + R * r_out * np.cos(t), cy - R * r_out * np.sin(t))
+            for t in np.linspace(a0, a1, 24)
+        ]
+        inner = [
+            (cx + R * r_in * np.cos(t), cy - R * r_in * np.sin(t))
+            for t in np.linspace(a1, a0, 24)
+        ]
+        self._wedge_tmpl = np.array(outer + inner, dtype=np.float32).reshape(-1, 1, 2)
         self.update()
 
-    # ---------- public setter ----------
+    # ----- API -----
     def set_alpha(self, a: float):
-        self.alpha = max(0.0, min(1.0, a)); self.update()
+        self.alpha = max(0.0, min(1.0, a))
+        self.update()
 
-    def set_board_scale(self, s: float):
-        self.board_scale = max(0.90, min(1.10, s)); self.update()
-
-    def set_board_rotate(self, deg: float):
-        self.board_rotate = max(-15.0, min(15.0, deg)); self.update()
-
-    # ---------- core ----------
     def set_frame(self, frame: Optional[np.ndarray]):
         self.frame = frame
         self.update()
 
-    def _src_square(self) -> np.ndarray:
-        """600x600-Quad nach Scale/Rotation um das Zentrum transformieren."""
-        src = np.array([[0,0],[600,0],[600,600],[0,600]], dtype=np.float32)
-        c = np.array([300.0, 300.0], dtype=np.float32)
-        v = src - c
-        rad = np.deg2rad(self.board_rotate)
-        R = np.array([[np.cos(rad), -np.sin(rad)],
-                      [np.sin(rad),  np.cos(rad)]], dtype=np.float32)
-        v = (R @ (v.T)).T * self.board_scale
-        return v + c
+    def set_points(self, pts: np.ndarray):
+        if pts is not None and pts.shape == (4, 2):
+            self.points = pts.astype(np.float32)
+            self.pointsChanged.emit()
+            self.update()
 
+    # ----- Homography compute (Weltmodus) -----
     def homography(self) -> Optional[np.ndarray]:
-        if self.points.shape != (4, 2):
+        """
+        Rechnet (bei vorhandenem Frame) die Welt- und Template-Homographien aus self.points.
+        """
+        if self.frame is None or self.points.shape != (4, 2):
             return None
-        src = self._src_square()
-        dst = self.points.astype(np.float32)
-        self.M = cv2.getPerspectiveTransform(src, dst)
-        return self.M
+        try:
+            gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
+            H_world, H_tpl, pts_ref = compute_homographies_from_points(
+                gray, self.points
+            )
+            self.points = pts_ref
+            self.H_world2img = H_world
+            self.H_tplPx2img = H_tpl
+            return self.H_tplPx2img
+        except Exception:
+            return None
 
-    # ---------- painting ----------
+    # ----- Painting -----
     def _paint_pixmap(self, p: QtGui.QPainter, pm: QtGui.QPixmap):
         rect = self.rect()
         ps = pm.size()
         scale = min(rect.width() / ps.width(), rect.height() / ps.height())
         dw, dh = ps.width() * scale, ps.height() * scale
         ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
-        p.drawPixmap(QtCore.QRectF(ox, oy, dw, dh), pm, QtCore.QRectF(0, 0, ps.width(), ps.height()))
+        p.drawPixmap(
+            QtCore.QRectF(ox, oy, dw, dh),
+            pm,
+            QtCore.QRectF(0, 0, ps.width(), ps.height()),
+        )
         return scale, ox, oy, ps
 
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
-        p.setRenderHints(QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        p.setRenderHints(
+            QtGui.QPainter.RenderHint.Antialiasing
+            | QtGui.QPainter.RenderHint.SmoothPixmapTransform
+        )
 
         if self.frame is None:
             p.setPen(QtGui.QPen(QtGui.QColor("#aaa")))
@@ -408,27 +389,39 @@ class DragBoard(QtWidgets.QLabel):
         pm = cvimg_to_qpix(self.frame)
         scale, ox, oy, ps = self._paint_pixmap(p, pm)
 
-        # Overlay: warped Grid
-        if self.homography() is not None:
+        # Overlay: warped Grid via H_tplPx2img
+        H_tpl = self.homography()
+        if H_tpl is not None:
             h, w = self.frame.shape[:2]
-            warped = cv2.warpPerspective(GRID_600, self.M, (w, h))
+            warped = cv2.warpPerspective(
+                GRID_600,
+                H_tpl,
+                (w, h),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_TRANSPARENT,
+            )
             wpm = cvimg_to_qpix(warped)
             p.setOpacity(self.alpha)
             self._paint_pixmap(p, wpm)
             p.setOpacity(1.0)
 
-            # --- rotes Wedge via Homographie (Template -> Bild) ---
+            # rotes Wedge via Homographie
             if self._wedge_tmpl is not None:
                 try:
-                    pts_img = cv2.perspectiveTransform(self._wedge_tmpl, self.M).reshape(-1, 2)
+                    pts_img = cv2.perspectiveTransform(self._wedge_tmpl, H_tpl).reshape(
+                        -1, 2
+                    )
                     fw, fh = self.frame.shape[1], self.frame.shape[0]
                     path = QtGui.QPainterPath()
                     first = True
-                    for (x_img, y_img) in pts_img:
+                    for x_img, y_img in pts_img:
                         x = ox + (x_img / fw) * (ps.width() * scale)
                         y = oy + (y_img / fh) * (ps.height() * scale)
-                        if first: path.moveTo(float(x), float(y)); first = False
-                        else:     path.lineTo(float(x), float(y))
+                        if first:
+                            path.moveTo(float(x), float(y))
+                            first = False
+                        else:
+                            path.lineTo(float(x), float(y))
                     path.closeSubpath()
                     p.setPen(QtGui.QPen(QtGui.QColor(255, 64, 64, 220), 1))
                     p.setBrush(QtGui.QColor(255, 64, 64, 90))
@@ -436,43 +429,50 @@ class DragBoard(QtWidgets.QLabel):
                 except Exception:
                     pass
 
-        # Punkte
+        # 4 grüne Punkte
         p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
         p.setBrush(QtGui.QColor(34, 197, 94, 180))
         fw, fh = self.frame.shape[1], self.frame.shape[0]
+        labels = ["20-1", "6-10", "3-19", "11-14"]
         for idx, (x_img, y_img) in enumerate(self.points):
             x = ox + (x_img / fw) * (ps.width() * scale)
             y = oy + (y_img / fh) * (ps.height() * scale)
             p.drawEllipse(QtCore.QPointF(float(x), float(y)), 6, 6)
             p.setPen(QtGui.QPen(QtGui.QColor("#e5e7eb")))
-            p.drawText(QtCore.QPointF(float(x) + 8.0, float(y) - 8.0), str(idx + 1))
+            p.drawText(QtCore.QPointF(float(x) + 8.0, float(y) - 8.0), labels[idx])
             p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
 
-    # ---------- Maus/Tastatur ----------
+    # ----- Maus/Tastatur -----
     def _img_coords_from_mouse(self, e: QtGui.QMouseEvent):
         pm = cvimg_to_qpix(self.frame)
-        rect = self.rect(); ps = pm.size()
+        rect = self.rect()
+        ps = pm.size()
         scale = min(rect.width() / ps.width(), rect.height() / ps.height())
         dw, dh = ps.width() * scale, ps.height() * scale
         ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
         pos = e.position()
-        x = (pos.x() - ox) / scale; y = (pos.y() - oy) / scale
+        x = (pos.x() - ox) / scale
+        y = (pos.y() - oy) / scale
         fw, fh = self.frame.shape[1], self.frame.shape[0]
         x_img = max(0, min(fw - 1, x * (fw / ps.width())))
         y_img = max(0, min(fh - 1, y * (fh / ps.height())))
         return x_img, y_img
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        if self.frame is None: return
+        if self.frame is None:
+            return
         xi, yi = self._img_coords_from_mouse(e)
         d = np.linalg.norm(self.points - np.array([xi, yi]), axis=1)
         self._drag_idx = int(np.argmin(d)) if d.size else -1
-        if self._drag_idx >= 0: self._active_idx = self._drag_idx
+        if self._drag_idx >= 0:
+            self._active_idx = self._drag_idx
 
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if self.frame is None or self._drag_idx < 0: return
+        if self.frame is None or self._drag_idx < 0:
+            return
         xi, yi = self._img_coords_from_mouse(e)
         self.points[self._drag_idx] = [xi, yi]
+        self.pointsChanged.emit()
         self.update()
 
     def mouseReleaseEvent(self, _e: QtGui.QMouseEvent):
@@ -480,39 +480,51 @@ class DragBoard(QtWidgets.QLabel):
 
     def keyPressEvent(self, e: QtGui.QKeyEvent):
         k = e.key()
-        if k in (QtCore.Qt.Key.Key_1, QtCore.Qt.Key.Key_2, QtCore.Qt.Key.Key_3, QtCore.Qt.Key.Key_4):
-            self._active_idx = int(k - QtCore.Qt.Key.Key_1); self.update(); return
         step = 1.0
-        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:   step = 5.0
-        if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier: step = 20.0
-        if k == QtCore.Qt.Key.Key_Left:  self.points[self._active_idx, 0] -= step
-        if k == QtCore.Qt.Key.Key_Right: self.points[self._active_idx, 0] += step
-        if k == QtCore.Qt.Key.Key_Up:    self.points[self._active_idx, 1] -= step
-        if k == QtCore.Qt.Key.Key_Down:  self.points[self._active_idx, 1] += step
-        if k == QtCore.Qt.Key.Key_Q: self.board_rotate -= 0.2
-        if k == QtCore.Qt.Key.Key_E: self.board_rotate += 0.2
-        if k == QtCore.Qt.Key.Key_W: self.board_scale  += 0.001
-        if k == QtCore.Qt.Key.Key_S: self.board_scale  -= 0.001
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+            step = 5.0
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+            step = 20.0
+        if k == QtCore.Qt.Key.Key_Left:
+            self.points[self._active_idx, 0] -= step
+        elif k == QtCore.Qt.Key.Key_Right:
+            self.points[self._active_idx, 0] += step
+        elif k == QtCore.Qt.Key.Key_Up:
+            self.points[self._active_idx, 1] -= step
+        elif k == QtCore.Qt.Key.Key_Down:
+            self.points[self._active_idx, 1] += step
+        elif k in (
+            QtCore.Qt.Key.Key_1,
+            QtCore.Qt.Key.Key_2,
+            QtCore.Qt.Key.Key_3,
+            QtCore.Qt.Key.Key_4,
+        ):
+            self._active_idx = int(k - QtCore.Qt.Key.Key_1)
+        self.pointsChanged.emit()
         self.update()
 
 
+# ===================
+# 6) CamPanel (1 Cam)
+# ===================
 
-# ----------------------- CamPanel -----------------------
+
 class CamPanel(QtWidgets.QFrame):
     """
     Eine Kamera-Kachel:
       - Kamera wählen
       - Undistort (k1/k2)
-      - scale / rot
-      - Auto: findet Board-Kreis + richtet 20°-Wedge aus
+      - Auto (grober Seed)
+      - 4-Punkt-Klick (Double-Outer) → Welt→Bild Homographie
     """
+
     def __init__(self, cam_id_guess: int):
         super().__init__()
         self.setFrameShape(QtWidgets.QFrame.Shape.StyledPanel)
 
         # Ansicht
         self.view = DragBoard()
-        self.view.set_wedge_template(90.0)   # 20 nach oben im Template
+        self.view.set_wedge_template(90.0)  # 20 nach oben im Template
 
         # Kameraauswahl (Items füllt TripleCalibration)
         self.cmb = QtWidgets.QComboBox()
@@ -521,12 +533,24 @@ class CamPanel(QtWidgets.QFrame):
 
         # Entzerrung (grob)
         self.cb_undist = QtWidgets.QCheckBox("Undistort")
-        self.k1 = QtWidgets.QDoubleSpinBox(); self.k1.setRange(-0.50, 0.50); self.k1.setDecimals(3); self.k1.setSingleStep(0.005); self.k1.setValue(0.000); self.k1.setPrefix("k1 ")
-        self.k2 = QtWidgets.QDoubleSpinBox(); self.k2.setRange(-0.50, 0.50); self.k2.setDecimals(3); self.k2.setSingleStep(0.005); self.k2.setValue(0.000); self.k2.setPrefix("k2 ")
+        self.k1 = QtWidgets.QDoubleSpinBox()
+        self.k1.setRange(-0.50, 0.50)
+        self.k1.setDecimals(3)
+        self.k1.setSingleStep(0.005)
+        self.k1.setValue(0.000)
+        self.k1.setPrefix("k1 ")
+        self.k2 = QtWidgets.QDoubleSpinBox()
+        self.k2.setRange(-0.50, 0.50)
+        self.k2.setDecimals(3)
+        self.k2.setSingleStep(0.005)
+        self.k2.setValue(0.000)
+        self.k2.setPrefix("k2 ")
 
-        # Overlays: Scale/Rotation
-        self.scale = QtWidgets.QDoubleSpinBox(); self.scale.setRange(0.80, 1.40); self.scale.setDecimals(3); self.scale.setSingleStep(0.002); self.scale.setValue(1.000); self.scale.setPrefix("scale ")
-        self.rot   = QtWidgets.QDoubleSpinBox(); self.rot.setRange(-180.0, 180.0); self.rot.setDecimals(1); self.rot.setSingleStep(0.5); self.rot.setValue(0.0); self.rot.setPrefix("rot ")
+        # (Optional) Nudge-Buttons ±18° fürs Wedge (rein visuell)
+        self.btn_left = QtWidgets.QToolButton()
+        self.btn_left.setText("⟲")
+        self.btn_right = QtWidgets.QToolButton()
+        self.btn_right.setText("⟳")
 
         # Auto-Knopf
         self.btn_auto = QtWidgets.QPushButton("Auto")
@@ -537,43 +561,27 @@ class CamPanel(QtWidgets.QFrame):
         bar.addWidget(self.cb_undist, 0)
         bar.addWidget(self.k1, 0)
         bar.addWidget(self.k2, 0)
-        bar.addWidget(self.scale, 0)
-        bar.addWidget(self.rot, 0)
+        bar.addWidget(self.btn_left, 0)
+        bar.addWidget(self.btn_right, 0)
         bar.addWidget(self.btn_auto, 0)
 
         lay = QtWidgets.QVBoxLayout(self)
         lay.addWidget(self.view, 1)
         lay.addLayout(bar)
 
-        # Verbindungen
+        # Signale
         self.cb_undist.stateChanged.connect(lambda *_: self.view.update())
         self.k1.valueChanged.connect(lambda *_: self.view.update())
         self.k2.valueChanged.connect(lambda *_: self.view.update())
-        self.scale.valueChanged.connect(lambda *_: self._apply_transform())
-        self.rot.valueChanged.connect(lambda *_: self._apply_transform())
         self.btn_auto.clicked.connect(self.auto_calibrate)
+        self.btn_left.clicked.connect(lambda: self._nudge_wedge(-18))
+        self.btn_right.clicked.connect(lambda: self._nudge_wedge(+18))
 
         # Laufzeitstate
         self.cap: Optional[cv2.VideoCapture] = None
         self.res = (1280, 720)
         self.fps = 30
-
-        # Ergebnis der Auto-Detektion (für Live-Nachführung bei rot/scale)
-        self._last_center: Optional[tuple[float, float]] = None
-        self._last_radius: Optional[float] = None
-
-        self.btn_left  = QtWidgets.QToolButton(); self.btn_left.setText("⟲")
-        self.btn_right = QtWidgets.QToolButton(); self.btn_right.setText("⟳")
-        bar.addWidget(self.btn_left, 0)
-        bar.addWidget(self.btn_right, 0)
-
-        self.btn_left.clicked.connect(lambda: self._nudge_wedge(-18))
-        self.btn_right.clicked.connect(lambda: self._nudge_wedge(+18))
-
-        def _nudge_wedge(self, delta_deg: float):
-            if hasattr(self.view, "_wedge_angle_deg"):
-                self.view.set_wedge_template(self.view._wedge_angle_deg + delta_deg)
-
+        self._last_frame: Optional[np.ndarray] = None
 
     # ---------- Kamera-Lifecycle ----------
     def _on_select(self, _):
@@ -587,18 +595,18 @@ class CamPanel(QtWidgets.QFrame):
         self.stop()
         cap = open_capture(cam_id, self.res, self.fps)
         if cap is None:
-            QtWidgets.QMessageBox.warning(self, "Camera", f"Cannot open camera {cam_id} on any backend.")
+            QtWidgets.QMessageBox.warning(
+                self, "Camera", f"Cannot open camera {cam_id} on any backend."
+            )
             return
         self.cap = cap
-        self._last_center = None
-        self._last_radius = None
-       # self.view.set_wedge_poly(None)  # Tortenstück zurücksetzen
 
     def stop(self):
         if self.cap is not None:
             self.cap.release()
             self.cap = None
         self.view.set_frame(None)
+        self._last_frame = None
 
     def tick(self):
         if not self.cap:
@@ -608,7 +616,10 @@ class CamPanel(QtWidgets.QFrame):
             self.view.set_frame(None)
             return
         if self.cb_undist.isChecked():
-            frame = self._undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
+            frame = undistort_simple(
+                frame, float(self.k1.value()), float(self.k2.value())
+            )
+        self._last_frame = frame.copy()
         self.view.set_frame(frame.copy())
 
     def set_globals(self, res: tuple[int, int], fps: int):
@@ -619,32 +630,35 @@ class CamPanel(QtWidgets.QFrame):
             if idx is not None:
                 self.start(int(idx))
 
-    def current_h(self) -> Optional[np.ndarray]:
+    def current_overlay_h(self) -> Optional[np.ndarray]:
+        # sorgt dafür, dass H intern berechnet ist
         return self.view.homography()
+
+    def current_world_h(self) -> Optional[np.ndarray]:
+        self.view.homography()
+        return self.view.H_world2img
 
     def current_points(self) -> list[list[float]]:
         return self.view.points.tolist()
 
-    # ---------- Auto-Kalibrierung ----------
+    # ---------- Auto (grober Seed für 4 Punkte) ----------
     def auto_calibrate(self):
         """
-        1) Frame holen
-        2) größten Kreis (Board) mit HoughCircles finden -> center (cx,cy), radius r
-        3) dominanten Radial-Strahl via HoughLines (durch's Zentrum) -> Winkel -> rot
-        4) aus center/scale/rot vier Zielpunkte berechnen -> view.points setzen
-        5) 20er-Wedge als Polygon zeichnen
+        Grobe Auto-Punktvorschläge: nutzt einfache Kreis/ellipse-Annäherung,
+        setzt die 4 Punkte (oben/rechts/unten/links) auf den Double-Outer.
+        Danach verfeinert die DragBoard-Homography() ohnehin noch subpixel.
         """
         if not self.cap:
-            # versuchen, aus Auswahl zu starten
             cam = self.cmb.currentData()
             if cam is None:
-                QtWidgets.QMessageBox.information(self, "Auto", "Bitte zuerst eine Kamera wählen.")
+                QtWidgets.QMessageBox.information(
+                    self, "Auto", "Bitte zuerst eine Kamera wählen."
+                )
                 return
             self.start(int(cam))
             if not self.cap:
                 return
 
-        # stabiles Einzelbild holen
         ok, frame = self.cap.read()
         if not ok:
             QtWidgets.QMessageBox.warning(self, "Auto", "Kein Kamerabild verfügbar.")
@@ -652,140 +666,71 @@ class CamPanel(QtWidgets.QFrame):
 
         work = frame.copy()
         gray = cv2.cvtColor(work, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (9, 9), 1.5)
+        gray = cv2.GaussianBlur(gray, (5, 5), 1.2)
+        edges = cv2.Canny(gray, 60, 140)
 
-        # 2) Kreis suchen (rel. großzügige Parameter)
-        rows = gray.shape[0]
-        circles = cv2.HoughCircles(
-            gray, cv2.HOUGH_GRADIENT, dp=1.2, minDist=rows/4,
-            param1=100, param2=30, minRadius=int(rows*0.20), maxRadius=int(rows*0.50)
-        )
-
-        if circles is None:
-            QtWidgets.QMessageBox.warning(self, "Auto", "Kein Board-Kreis gefunden. (Sorge für gutes Licht / kontrastreiche Ringe.)")
+        # Ellipse fitten aus Kanten (Fallback auf größten Kreis)
+        cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+        best = None
+        best_score = -1
+        H, W = gray.shape[:2]
+        area_img = H * W
+        for c in cnts:
+            if len(c) < 50:
+                continue
+            area = cv2.contourArea(c)
+            if area < 0.02 * area_img:
+                continue
+            try:
+                (cx, cy), (MA, ma), ang = cv2.fitEllipse(c)
+            except cv2.error:
+                continue
+            ar = min(MA, ma) / max(MA, ma)
+            score = area * (0.5 + 0.5 * ar)
+            if score > best_score:
+                best_score, best = score, ((cx, cy), (MA, ma), ang)
+        if best is None:
+            QtWidgets.QMessageBox.warning(self, "Auto", "Board-Ellipse nicht gefunden.")
             return
 
-        circles = np.uint16(np.around(circles))
-        # größten nehmen
-        cxs, cys, rs = circles[0,:,0], circles[0,:,1], circles[0,:,2]
-        max_idx = int(np.argmax(rs))
-        cx, cy, r = float(cxs[max_idx]), float(cys[max_idx]), float(rs[max_idx])
+        (cx, cy), (MA, ma), ang = best
+        a, b = MA / 2.0, ma / 2.0
 
-        # 3) Winkel des dominanten Radial-Strahls schätzen
-        edges = cv2.Canny(gray, 80, 160)
-        lines = cv2.HoughLines(edges, 1, np.pi/180, 120)
-        rot_deg = 0.0
-        if lines is not None:
-            # Linie mit minimaler Distanz zum Zentrum wählen
-            best = None
-            best_d = 1e9
-            for rho_theta in lines[:,0,:]:
-                rho, theta = float(rho_theta[0]), float(rho_theta[1])
-                # Distanz Punkt (cx,cy) zur Linie (rho,theta):
-                d = abs(cx*np.cos(theta) + cy*np.sin(theta) - rho)
-                if d < best_d:
-                    best_d, best = d, (rho, theta)
-            if best is not None:
-                _, theta = best
-                # Linienrichtung = theta + 90°; wir wollen, dass diese "nach oben" (90°) zeigt
-                angle_line = np.degrees(theta) + 90.0
-                # zu [-180,180] normalisieren
-                while angle_line > 180: angle_line -= 360
-                while angle_line < -180: angle_line += 360
-                rot_deg = 90.0 - angle_line  # Korrektur
-        # UI aktualisieren (User darf feinjustieren)
-        self.rot.blockSignals(True)
-        self.rot.setValue(rot_deg)
-        self.rot.blockSignals(False)
+        def ellipse_radius_at(img_angle_rad: float, theta_deg: float) -> float:
+            theta = np.deg2rad(theta_deg)
+            phi_p = img_angle_rad - theta
+            c, s = np.cos(phi_p), np.sin(phi_p)
+            den = (c * c) / (a * a) + (s * s) / (b * b)
+            return 0.0 if den <= 1e-12 else 1.0 / np.sqrt(den)
 
-        # merken für Folgeregelung
-        self._last_center = (cx, cy)
-        self._last_radius = r
+        # 4 Zielwinkel in Bildkoordinaten (oben/rechts/unten/links) an *Grenzlinien* (+9°)
+        desired_deg = [
+            -81.0,
+            9.0,
+            99.0,
+            -171.0,
+        ]  # (-90 + 9), (0+9), (90+9), (180+9-360)
+        pts = []
+        for deg in desired_deg:
+            phi = np.deg2rad(deg)
+            r = ellipse_radius_at(phi, ang) * REL["double_outer"]  # Double-Outer Anteil
+            x = cx + r * np.cos(phi)
+            y = cy + r * np.sin(phi)
+            pts.append([x, y])
 
-        # 4/5) Punkte + Wedge anhand aktueller Regler anwenden
-        self._apply_transform()
-
-    # ---------- Geometrie anwenden ----------
-    def _apply_transform(self):
-        """Erzeuge points (Ziel-Quadrilateral) aus center/r/scale/rot. Wedge kommt aus Template."""
-        if self._last_center is None or self._last_radius is None:
-            return
-        cx, cy = self._last_center
-        r = float(self._last_radius)
-        s = float(self.scale.value())
-        rot_deg = float(self.rot.value())
-        rot_rad = np.deg2rad(rot_deg)
-
-        half = s * r
-        corners = np.array([[-half, -half],[half,-half],[half,half],[-half,half]], dtype=np.float32)
-        R = np.array([[np.cos(rot_rad), -np.sin(rot_rad)],
-                    [np.sin(rot_rad),  np.cos(rot_rad)]], dtype=np.float32)
-        dst = (corners @ R.T) + np.array([cx, cy], dtype=np.float32)
-
-        self.view.points = dst.astype(np.float32)
-        self.view.update()
+        self.view.set_points(np.array(pts, dtype=np.float32))
 
     def _nudge_wedge(self, delta_deg: float):
-        """
-        Dreht das Tortenstück (und damit das Overlay) um delta_deg Grad.
-        Wird von den ◀/▶-Buttons genutzt (±18° = ein Segment).
-        """
-        # aktuellen Wert holen, drehen und in [-180, 180] normalisieren
-        val = float(self.rot.value()) + float(delta_deg)
-        while val > 180.0:
-            val -= 360.0
-        while val < -180.0:
-            val += 360.0
-
-        # SpinBox setzen ohne Rückkopplung und Geometrie anwenden
-        self.rot.blockSignals(True)
-        self.rot.setValue(val)
-        self.rot.blockSignals(False)
-        self._apply_transform()
+        """Dreht *nur* das Wedge-Template (±18° / Feinnudge)."""
+        if hasattr(self.view, "_wedge_angle_deg"):
+            self.view.set_wedge_template(self.view._wedge_angle_deg + delta_deg)
 
 
-
-    # ---------- Helper ----------
-    @staticmethod
-    def _undistort_simple(img: np.ndarray, k1: float, k2: float) -> np.ndarray:
-        """Simple radiale Entzerrung (ohne Kameramatrix). Reicht zum Ausrichten."""
-        if abs(k1) < 1e-8 and abs(k2) < 1e-8:
-            return img
-        h, w = img.shape[:2]
-        cx, cy = w/2.0, h/2.0
-        yy, xx = np.indices((h, w), dtype=np.float32)
-        x = (xx - cx) / cx
-        y = (yy - cy) / cy
-        r2 = x*x + y*y
-        factor = 1 + k1*r2 + k2*(r2*r2)
-        x_u = x * factor
-        y_u = y * factor
-        map_x = (x_u * cx + cx).astype(np.float32)
-        map_y = (y_u * cy + cy).astype(np.float32)
-        return cv2.remap(img, map_x, map_y, interpolation=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
-
-    @staticmethod
-    def _make_wedge_poly(center: tuple[float, float], r_out: float, r_in: float,
-                         angle_up_deg: float, spread_deg: float = 18.0,
-                         steps: int = 12) -> list[tuple[float, float]]:
-        """
-        Erzeugt ein Ring-Sektor-Polygon (für das 20er-Tortenstück):
-        - angle_up_deg: Richtung "oben" in Bildkoordinaten
-        - spread_deg: Sektorbreite (Darts = 18°)
-        """
-        cx, cy = center
-        a0 = np.deg2rad(angle_up_deg - spread_deg/2.0)
-        a1 = np.deg2rad(angle_up_deg + spread_deg/2.0)
-        outer = []
-        inner = []
-        for t in np.linspace(a0, a1, steps):
-            outer.append((cx + r_out*np.cos(t), cy - r_out*np.sin(t)))
-        for t in np.linspace(a1, a0, steps):
-            inner.append((cx + r_in*np.cos(t), cy - r_in*np.sin(t)))
-        return outer + inner
+# ===========================
+# 7) Hauptdialog / Save/Load
+# ===========================
 
 
-# -------------- Main-Dialog --------------
 class TripleCalibration(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -798,7 +743,7 @@ class TripleCalibration(QtWidgets.QDialog):
         self.panels = [CamPanel(0), CamPanel(1), CamPanel(2)]
 
         # nur vorhandene Kameras ins Dropdown
-        avail = enumerate_cameras(10)  # z. B. [0]
+        avail = enumerate_cameras(10)
         for p in self.panels:
             p.cmb.blockSignals(True)
             p.cmb.clear()
@@ -860,7 +805,7 @@ class TripleCalibration(QtWidgets.QDialog):
         self.timer = QtCore.QTimer(self)
         self.timer.timeout.connect(self._tick)
         self.timer.start(33)
-        self._apply_globals()  # kein Autostart – Kamera erst nach Auswahl
+        self._apply_globals()
 
     def _apply_globals(self):
         res = self.cmb_res.currentData()
@@ -872,7 +817,7 @@ class TripleCalibration(QtWidgets.QDialog):
         for p in self.panels:
             p.tick()
 
-    # --- Save/Load (Fiverr-JSON kompatibel) ---
+    # --- Save/Load (JSON) ---
     def _save_file(self):
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Save Calibration", "calibration.json", "JSON (*.json)"
@@ -881,15 +826,18 @@ class TripleCalibration(QtWidgets.QDialog):
             return
         data = {}
         for i, p in enumerate(self.panels, start=1):
-            H = p.current_h()
-            if H is None:
+            H_tpl = p.current_overlay_h()
+            H_w = p.current_world_h()
+            if H_tpl is None or H_w is None:
                 continue
             data[f"camera_{i}"] = {
-                "points": p.current_points(),
-                "homography_matrix": H.tolist(),
+                "points_img": p.current_points(),
+                "H_overlay_tplPx2img": H_tpl.tolist(),
+                "H_world2img": H_w.tolist(),
                 "intrinsics": {"k1": float(p.k1.value()), "k2": float(p.k2.value())},
+                "board_diameter_mm": 451.0,
+                "rel_radii": REL,
             }
-
         with open(path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
         QtWidgets.QMessageBox.information(self, "Save", f"Calibration saved to {path}")
@@ -903,15 +851,12 @@ class TripleCalibration(QtWidgets.QDialog):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-
             for i, p in enumerate(self.panels, start=1):
                 key = f"camera_{i}"
                 if key in data:
-                    # Punkte übernehmen
-                    pts = np.array(data[key]["points"], dtype=np.float32)
-                    p.view.points = pts
-
-                    # ➜ Intrinsics (k1/k2) übernehmen
+                    pts = np.array(data[key].get("points_img"), dtype=np.float32)
+                    if pts.shape == (4, 2):
+                        p.view.set_points(pts)
                     intr = data[key].get("intrinsics")
                     if intr:
                         p.k1.setValue(float(intr.get("k1", 0.0)))
@@ -919,20 +864,21 @@ class TripleCalibration(QtWidgets.QDialog):
                         p.cb_undist.setChecked(
                             abs(p.k1.value()) > 1e-6 or abs(p.k2.value()) > 1e-6
                         )
-
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Load", str(e))
 
     # --- Save to Agent (/calibration) ---
     def _save_agent(self):
-        # 1) Homographien einsammeln
-        Hs = []
+        Hs_overlay = []
+        Hs_world = []
         intr_list = []
         for p in self.panels:
-            H = p.current_h()
-            if H is not None:
-                Hs.append(H.tolist())
-
+            H_tpl = p.current_overlay_h()
+            H_w = p.current_world_h()
+            if H_tpl is not None:
+                Hs_overlay.append(H_tpl.tolist())
+            if H_w is not None:
+                Hs_world.append(H_w.tolist())
             intr_list.append(
                 {
                     "k1": float(p.k1.value()),
@@ -940,33 +886,26 @@ class TripleCalibration(QtWidgets.QDialog):
                     "enabled": bool(p.cb_undist.isChecked()),
                 }
             )
-
-        if not Hs:
+        if not Hs_world:
             QtWidgets.QMessageBox.warning(
                 self,
                 "Calibration",
-                "Keine Homographien vorhanden (Punkte ausrichten und/oder Kamera wählen).",
+                "Keine gültigen Homographien vorhanden. Punkte setzen oder Auto nutzen.",
             )
             return
 
-        # 2) Bestehende Config holen und Defaults setzen
         cfg = fetch_calibration()
         if not isinstance(cfg, dict):
             cfg = {}
-
-        cfg.setdefault("rings", DEFAULT_RINGS)
-        cfg.setdefault("boardDiameterMm", 451.0)
-
-        # Optional nützlich: aktuelle Capture-Settings mitschicken
-        res = self.cmb_res.currentData()  # (w, h)
+        cfg["boardDiameterMm"] = 451.0
+        cfg["rings"] = REL
+        res = self.cmb_res.currentData()
         fps = int(self.cmb_fps.currentData())
         cfg["capture"] = {"resolution": [int(res[0]), int(res[1])], "fps": fps}
+        cfg["homographies_world2img"] = Hs_world
+        cfg["homographies_overlay_tplPx2img"] = Hs_overlay
+        cfg["intrinsics"] = intr_list
 
-        # 3) Neue Werte setzen
-        cfg["homographies"] = Hs
-        cfg["intrinsics"] = intr_list  # pro Panel k1/k2 + enabled
-
-        # 4) Speichern beim Agent
         try:
             save_calibration(cfg)
         except Exception as e:
@@ -974,7 +913,6 @@ class TripleCalibration(QtWidgets.QDialog):
                 self, "Save", f"Fehler beim Speichern beim Agent:\n{e}"
             )
             return
-
         QtWidgets.QMessageBox.information(
             self, "Save", "Kalibrierung beim Agent gespeichert."
         )
