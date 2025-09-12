@@ -165,7 +165,7 @@
     <aside class="sidebar">
       <div class="brand">
         <div class="logo"></div>
-        <h1>AUTODARTS</h1>
+        <h1>TRIPLE ONE</h1>
       </div>
       <nav class="nav">
         <a class="active" href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg><span class="label">Play</span></a>
@@ -250,22 +250,34 @@
   </div>
 
   <script>
-    // Hash-Router (Stub)
     const grid = document.getElementById('game-grid');
     grid.addEventListener('click', (e)=>{
-      const btn = e.target.closest('button');
-      const tile = e.target.closest('.tile');
-      if(!tile) return;
-      const mode = tile.dataset.mode;
+        const btn = e.target.closest('button');
+        const tile = e.target.closest('.tile');
+        if(!tile) return;
 
-      if(btn && btn.dataset.action === 'find'){
+        const mode = tile.dataset.mode;
+
+        // "Find match" bleibt Stub für später
+        if(btn && btn.dataset.action === 'find'){
         location.hash = `#/matchmaker?mode=${mode}`;
         return;
-      }
-      if(!btn){
+        }
+        // Klick auf X01-Kachel oder "Quick setup" -> Setup-Seite öffnen
+        if(mode === 'x01'){
+        window.location.href = 'x01_setup.html';
+        return;
+        }
+        // andere Modi können vorerst Stub bleiben
+        if(btn && btn.dataset.action === 'setup'){
         location.hash = `#/setup?mode=${mode}`;
-      }
+        return;
+        }
+        if(!btn){
+        location.hash = `#/setup?mode=${mode}`;
+        }
     });
-  </script>
+    </script>
+
 </body>
 </html>

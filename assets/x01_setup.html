@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TripleOne – X01 Setup</title>
+  <style>
+    :root{
+      --bg-a:#0c1444; --bg-b:#17366e;
+      --panel:rgba(18,31,69,.55);
+      --panel-border:#2b4a8f;
+      --text:#eef3ff; --muted:#a9b6d1;
+      --brand-a:#6ea8ff; --brand-b:#79e2ff;
+      --card:#214078cc; --card-border:#31579d;
+      --radius:14px; --radius-lg:16px; --shadow:0 14px 40px rgba(0,0,0,.35);
+      --sidebar-w: 240px; --gap:24px;
+      --setup-max: 680px;
+      --seg-bg:#132c64a6; --seg-bd:#2a4a8a; --seg-on:#244079; --seg-on-bd:#3a5fb2;
+      --btn:#1a356b; --btn-bd:#3a5fb2; --btn-hover:#21417c;
+      --input-bg:#0f234d; --input-bd:#325092;
+    }
+    *{box-sizing:border-box} html,body{height:100%}
+    body{
+      margin:0; color:var(--text);
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+      background:
+        radial-gradient(1100px 700px at 25% 0%, #233f87 0%, transparent 60%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b));
+    }
+
+    /* Layout */
+    .app{
+      display:grid; gap:var(--gap); padding:var(--gap);
+      grid-template-columns: var(--sidebar-w) 1fr;
+      min-height:100vh;
+    }
+    @media (max-width: 680px){ .app{ grid-template-columns: 1fr } .sidebar{position:relative} }
+
+    /* Sidebar */
+    .sidebar{
+      position:sticky; top:24px; align-self:start;
+      background:var(--panel); border:1px solid var(--panel-border);
+      border-radius:var(--radius-lg); padding:16px; backdrop-filter: blur(6px);
+      height:fit-content;
+    }
+    .brand{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+    .brand .logo{width:28px;height:28px;border-radius:8px;background:conic-gradient(from 0deg, var(--brand-a), var(--brand-b));box-shadow:var(--shadow)}
+    .brand h1{font-size:16px;margin:0;letter-spacing:.6px;font-weight:700}
+    .nav{display:flex;flex-direction:column;gap:6px}
+    .nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;text-decoration:none;color:var(--text);border:1px solid #2a4a8a;background:#132c64a6;border-radius:12px}
+    .nav a:hover{background:#1b376eb8}
+    .nav a.active{background:#244079;border-color:#3a5fb2}
+    .icon{width:18px;height:18px;opacity:.9}
+
+    /* Main */
+    .main{display:flex;justify-content:center}
+    .container{width:100%;max-width:var(--setup-max)}
+
+    .card{
+      margin-top:24px;
+      background:var(--card); border:1px solid var(--card-border);
+      border-radius:var(--radius-lg); box-shadow:var(--shadow);
+      padding:18px 18px 20px;
+    }
+    .card h2{margin:6px 8px 14px; font-size:28px}
+
+    .form{
+      display:grid; grid-template-columns: 170px 1fr; gap:12px 14px; padding:8px;
+    }
+    @media (max-width: 560px){ .form{ grid-template-columns:1fr; } }
+
+    .label{align-self:center; color:#e6ecff}
+    .seg{ display:flex; flex-wrap:wrap; gap:8px; }
+    .seg button{
+      border:1px solid var(--seg-bd); background:var(--seg-bg);
+      color:var(--text); border-radius:10px; padding:6px 10px; cursor:pointer;
+    }
+    .seg button.active{ background:var(--seg-on); border-color:var(--seg-on-bd) }
+
+    .inline{ display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+    select{
+      border:1px solid var(--input-bd); background:var(--input-bg); color:var(--text);
+      border-radius:10px; padding:6px 10px; outline:none; min-width:134px;
+    }
+
+    .actions{
+      display:flex; justify-content:flex-end; padding:8px; margin-top:8px;
+    }
+    .btn{
+      appearance:none; border:1px solid var(--btn-bd);
+      background:var(--btn); color:var(--text);
+      border-radius:12px; padding:10px 14px; cursor:pointer;
+      min-width:140px;
+    }
+    .btn:hover{ background:var(--btn-hover) }
+    .muted{ color:var(--muted) }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand"><div class="logo"></div><h1>AUTODARTS</h1></div>
+      <nav class="nav">
+        <a href="play_dashboard.html"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Play</a>
+        <a class="active" href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h10v2H7zm-2 5h14v2H5zm3 5h8v2H8z"/></svg>Matches</a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4 2 7-6.5-4.5L5.5 20l2-7L2 9h7z"/></svg>Tournaments</a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h8V3H3v10zm10 8h8V3h-8v18z"/></svg>Statistics</a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 20h18v-2H3v2zM5 4v12h14V4H5zm2 2h10v8H7V6z"/></svg>My boards</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <main class="main">
+      <div class="container">
+        <div class="card">
+          <h2>X01</h2>
+          <div class="form" id="form">
+            <!-- Base score -->
+            <div class="label">Base score</div>
+            <div class="seg" data-key="base">
+              <button>121</button>
+              <button>170</button>
+              <button>301</button>
+              <button class="active">501</button>
+              <button>701</button>
+              <button>901</button>
+            </div>
+
+            <!-- In mode -->
+            <div class="label">In mode</div>
+            <div class="seg" data-key="in">
+              <button class="active">Straight</button>
+              <button>Double</button>
+              <button>Master</button>
+            </div>
+
+            <!-- Out mode -->
+            <div class="label">Out mode</div>
+            <div class="seg" data-key="out">
+              <button>Straight</button>
+              <button class="active">Double</button>
+              <button>Master</button>
+            </div>
+
+            <!-- Max rounds -->
+            <div class="label">Max rounds</div>
+            <div class="seg" data-key="rounds">
+              <button>15</button>
+              <button>20</button>
+              <button class="active">50</button>
+              <button>80</button>
+            </div>
+
+            <!-- Bull mode -->
+            <div class="label">Bull mode</div>
+            <div class="seg" data-key="bull">
+              <button class="active">25/50</button>
+              <button>50/50</button>
+            </div>
+
+            <!-- Bull-off -->
+            <div class="label">Bull-off</div>
+            <div class="seg" data-key="bulloff">
+              <button>Off</button>
+              <button class="active">Normal</button>
+              <button>Official</button>
+            </div>
+
+            <!-- Match mode -->
+            <div class="label">Match mode</div>
+            <div class="inline">
+              <div class="seg" data-key="matchmode">
+                <button class="active">Off</button>
+                <button>Legs</button>
+                <button>Sets</button>
+              </div>
+
+              <!-- DROPDOWNS (werden dynamisch ein/ausgeblendet) -->
+              <select id="legsSelect" style="display:none"></select>
+              <select id="setsSelect" style="display:none"></select>
+              <select id="legsPerSetSelect" style="display:none"></select>
+            </div>
+
+            <!-- Lobby -->
+            <div class="label">Lobby</div>
+            <div class="seg" data-key="lobby">
+              <button class="active">Public</button>
+              <button>Private</button>
+            </div>
+          </div>
+
+          <div class="actions">
+            <button id="openLobby" class="btn">Open Lobby</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    // Helper: Optionen füllen
+    function fillSelect(select, items){
+      select.innerHTML = "";
+      for(const {value, label} of items){
+        const opt = document.createElement("option");
+        opt.value = value; opt.textContent = label;
+        select.appendChild(opt);
+      }
+    }
+
+    // Voreinstellungen
+    const legsSelect = document.getElementById('legsSelect');           // Legs-Modus
+    const setsSelect = document.getElementById('setsSelect');           // Sets: Anzahl Sets
+    const legsPerSetSelect = document.getElementById('legsPerSetSelect'); // Sets: Legs pro Set
+
+    // Listen gemäß Screenshots:
+    const legsOptions = Array.from({length:11}, (_,i)=>({ // 1..11
+      value:`legs:${i+1}`, label:`First to ${i+1} leg${i? 's':''}`
+    }));
+    const setsOptions = [2,3,4,5,6,7].map(n=>({ value:`sets:${n}`, label:`First to ${n} set${n>1?'s':''}` }));
+    const legsPerSetOptions = Array.from({length:10}, (_,i)=>({ // 2..11
+      value:`lps:${i+2}`, label:`First to ${i+2} legs`
+    }));
+
+    // Standard: Legs=2, Sets=2, Legs-per-set=2
+    function setDefaults(){
+      fillSelect(legsSelect, legsOptions);
+      legsSelect.value = "legs:2";
+      fillSelect(setsSelect, setsOptions);
+      setsSelect.value = "sets:2";
+      fillSelect(legsPerSetSelect, legsPerSetOptions);
+      legsPerSetSelect.value = "lps:2";
+    }
+    setDefaults();
+
+    // Segmented Buttons Verhalten (single-select)
+    document.querySelectorAll('.seg').forEach(seg=>{
+      seg.addEventListener('click', (e)=>{
+        const btn = e.target.closest('button'); if(!btn) return;
+        seg.querySelectorAll('button').forEach(b=>b.classList.remove('active'));
+        btn.classList.add('active');
+
+        if(seg.dataset.key === 'matchmode'){
+          renderMatchControls();
+        }
+      });
+    });
+
+    // UI Umschalten je nach Matchmode
+    function renderMatchControls(){
+      const mode = document.querySelector('.seg[data-key="matchmode"] button.active').textContent.trim().toLowerCase();
+
+      // verstecken
+      legsSelect.style.display = 'none';
+      setsSelect.style.display = 'none';
+      legsPerSetSelect.style.display = 'none';
+
+      if(mode === 'legs'){
+        legsSelect.style.display = '';
+      } else if(mode === 'sets'){
+        setsSelect.style.display = '';
+        legsPerSetSelect.style.display = '';
+      }
+    }
+    renderMatchControls();
+
+    // Aktuelle Settings sammeln
+    function currentSettings(){
+      const pick = key => {
+        const seg = document.querySelector(`.seg[data-key="${key}"]`);
+        return seg?.querySelector('button.active')?.textContent.trim();
+      };
+      const matchModeBtn = document.querySelector('.seg[data-key="matchmode"] button.active');
+      const matchMode = matchModeBtn ? matchModeBtn.textContent.trim().toLowerCase() : 'off';
+
+      const result = {
+        base: pick('base'), inMode: pick('in'), outMode: pick('out'),
+        maxRounds: pick('rounds'), bull: pick('bull'), bullOff: pick('bulloff'),
+        lobby: pick('lobby'), matchMode
+      };
+
+      if(matchMode === 'legs'){
+        result.legsToWin = parseInt((legsSelect.value||'legs:2').split(':')[1], 10);
+      } else if(matchMode === 'sets'){
+        result.setsToWin = parseInt((setsSelect.value||'sets:2').split(':')[1], 10);
+        result.legsPerSet = parseInt((legsPerSetSelect.value||'lps:2').split(':')[1], 10);
+      }
+      return result;
+    }
+
+    // Open Lobby (Stub)
+    document.getElementById('openLobby').addEventListener('click', ()=>{
+      const s = currentSettings();
+      alert("Open Lobby (stub)\n\n" + JSON.stringify(s, null, 2));
+    });
+  </script>
+</body>
+</html>
