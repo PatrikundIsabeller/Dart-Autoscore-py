@@ -20,6 +20,10 @@ load_dotenv()  # lädt .env
 from PyQt6 import QtCore, QtGui, QtWidgets
 from calibration_dialog import CalibrationDialog
 from calibrate_wizard import open_calibration
+
+# controller_app.py
+from PyQt6.QtWidgets import QMainWindow, QMessageBox, QPushButton
+from play_launcher import open_play_dashboard, is_calibration_valid  # ← reuse
 import webbrowser
 import random
 import requests
@@ -484,69 +488,24 @@ class MainWindow(QtWidgets.QMainWindow):
         open_triple_calibration(self)
 
     # ------------------------- PLAY-FLOW ----------------------------------
+    # In class MainWindow:
+
     def on_play(self):
         """
-        Snapshot -> Session -> Play
-        1) Config beim lokalen Agent lesen (/calibration)
-        2) In der Cloud als Snapshot speichern
-        3) Session erstellen (erhält One-Time-Token + playUrl)
-        4) Browser mit playUrl?token=... öffnen
+        Öffnet das lokale Play-Dashboard im Standard-Browser.
+        (Nutzt play_launcher.open_play_dashboard)
         """
-        # URLs/IDs aus ENV nehmen, sonst Fallbacks/Globals
-        agent_url = os.environ.get(
-            "TRIPLEONE_AGENT",
-            AGENT_URL if "AGENT_URL" in globals() else "http://127.0.0.1:4700",
-        )
-        api_url = os.environ.get(
-            "TRIPLEONE_API",
-            API_URL if "API_URL" in globals() else "http://127.0.0.1:5080",
-        )
-        device_id = os.environ.get(
-            "TRIPLEONE_DEVICE", DEVICE_ID if "DEVICE_ID" in globals() else "dev_local"
-        )
-
-        # 1) Config holen
-        try:
-            cfg = requests.get(
-                agent_url.rstrip("/") + "/calibration", timeout=1.5
-            ).json()
-        except Exception as e:
-            self.toast(f"Config lesen fehlgeschlagen: {e}")
-            return
-
-        # 2) Snapshot
-        try:
-            r1 = requests.post(
-                f"{api_url}/v1/devices/{device_id}/config/snapshot",
-                json=cfg,
-                timeout=3.0,
+        if not is_calibration_valid():
+            QMessageBox.warning(
+                self, "Kalibrierung fehlt", "Bitte zuerst die Kalibrierung abschließen."
             )
-            r1.raise_for_status()
-        except Exception as e:
-            self.toast(f"Snapshot fehlgeschlagen: {e}")
-            return
+            # return  # auskommentieren, wenn du trotzdem öffnen willst
 
-        # 3) Session
-        try:
-            r2 = requests.post(
-                f"{api_url}/v1/sessions",
-                json={
-                    "deviceId": device_id,
-                    "gameType": "X01",
-                    "options": {"startScore": 501, "doubleOut": True},
-                },
-                timeout=3.0,
-            )
-            r2.raise_for_status()
-            data = r2.json()
-            play_url = data["playUrl"]
-            token = data["oneTimeToken"]
-        except Exception as e:
-            self.toast(f"Session fehlgeschlagen: {e}")
-            return
+        # Spiele-Grid öffnen:
+        open_play_dashboard()
 
-        # 4) Browser öffnen
-        webbrowser.open(f"{play_url}?token={token}")
+        # Optional: direkt in X01-Setup springen:
+        # open_play_dashboard("x01")  # -> öffnet ...#/setup?mode=x01
 
     # ------------------------- Status/Styling ------------------------------
     def on_status(self, data: dict):
