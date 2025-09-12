@@ -1,0 +1,26 @@
+{
+  "board_diameter_mm": 451.0,
+  "double_outer_rel": 0.995,
+
+  "H_world2img": [
+    [1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, 0.0, 1.0]
+  ],
+
+  "points_img_px": {
+    "top_20_1": [300.0, 10.0],
+    "right_6_10": [590.0, 300.0],
+    "bottom_3_19": [300.0, 590.0],
+    "left_11_14": [10.0, 300.0]
+  },
+
+  "intrinsics": { "k1": 0.0, "k2": 0.0 },
+
+  "rel_radii": [0.985, 0.93, 0.57, 0.51, 0.093, 0.037],
+
+  "meta": {
+    "created": "dev-sample",
+    "note": "Identity-Matrix nur für Tests. Bitte nach Kalibrierung überschreiben."
+  }
+}

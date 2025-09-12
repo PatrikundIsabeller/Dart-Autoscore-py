@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TripleOne – Play</title>
+  <style>
+    :root{
+      --bg-start:#0b1d44; --bg-end:#122a5a;
+      --panel:#1b366e40; --text:#e9eef7; --muted:#a9b6d1;
+      --accent:#6ea8ff; --accent-2:#79e2ff;
+      --card:#203b74cc; --card-hover:#274583cc;
+      --radius:16px; --shadow:0 12px 30px rgba(0,0,0,.35);
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; color:var(--text);
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+      background: radial-gradient(1100px 800px at 30% 10%, #1a3a7a 0%, transparent 60%),
+                 linear-gradient(180deg, var(--bg-start), var(--bg-end));
+    }
+    .app{display:grid; grid-template-columns: 240px 1fr 300px; gap:24px; padding:24px; min-height:100vh}
+
+    /* Sidebar */
+    .sidebar{position:sticky; top:24px; align-self:start; background:var(--panel); border:1px solid #2c4b8a; border-radius:var(--radius); padding:16px; backdrop-filter: blur(6px)}
+    .brand{display:flex; align-items:center; gap:12px; margin-bottom:12px}
+    .brand .logo{width:28px; height:28px; border-radius:8px; background:linear-gradient(135deg, var(--accent), var(--accent-2)); box-shadow: var(--shadow)}
+    .brand h1{font-size:16px; margin:0; letter-spacing:.4px}
+    .nav a{display:flex; align-items:center; gap:10px; padding:10px 12px; margin:4px 0; text-decoration:none; color:var(--text); border-radius:12px; border:1px solid #2a4a8a; background:#16306666}
+    .nav a:hover{background:#1b376e99}
+    .nav a.active{background:#244079; border-color:#3a5fb2}
+
+    /* Main */
+    .main{max-width:1100px}
+    .hero{
+      border-radius:var(--radius); border:1px solid #31579d; box-shadow: var(--shadow); padding:26px 28px;
+      display:flex; align-items:center; justify-content:space-between; gap:16px;
+      background:linear-gradient(135deg, rgba(255,255,255,.05), rgba(255,255,255,.02));
+    }
+    .hero h2{margin:0; font-size:28px}
+    .hero p{margin:4px 0 0; color:var(--muted)}
+
+    /* Grid */
+    .grid{margin-top:22px; display:grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap:16px}
+    @media (max-width: 1100px){ .app{grid-template-columns:220px 1fr} .grid{grid-template-columns: repeat(2, minmax(0,1fr))} }
+    @media (max-width: 860px){ .app{grid-template-columns:1fr} .sidebar{position:relative} .grid{grid-template-columns:1fr} }
+
+    .tile{background:var(--card); border:1px solid #2e4e93; border-radius:14px; padding:18px; min-height:92px; display:flex; flex-direction:column; justify-content:space-between; box-shadow: var(--shadow); transition: transform .08s ease, box-shadow .2s ease, background .2s; cursor:pointer}
+    .tile:hover{transform: translateY(-2px); background:var(--card-hover)}
+    .tile h3{margin:0; font-size:20px; letter-spacing:.2px}
+    .tile small{color:var(--muted)}
+    .actions{display:flex; gap:10px; margin-top:12px}
+    .btn{appearance:none; border:1px solid #3a5fb2; border-radius:12px; padding:10px 14px; background:#1b376e; color:var(--text); cursor:pointer}
+    .btn:hover{background:#234380}
+    .btn.primary{border-color:#4a80ff; background:linear-gradient(180deg, #3c6de6, #2d5ad1)}
+    .btn.primary:hover{filter:brightness(1.05)}
+
+    /* Right rail */
+    .rail{position:sticky; top:24px; align-self:start; background:var(--panel); border:1px solid #2c4b8a; border-radius:var(--radius); padding:16px; backdrop-filter: blur(6px)}
+    .rail h4{margin:0 0 8px 0}
+    .muted{color:var(--muted)}
+  </style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand"><div class="logo"></div><h1>TRIPLEONE</h1></div>
+    <nav class="nav">
+      <a class="active" href="#">Play</a>
+      <a href="#">Lobbies</a>
+      <a href="#">Matches</a>
+      <a href="#">Tournaments</a>
+      <a href="#">Match history</a>
+      <a href="#">Statistics</a>
+      <a href="#">My boards</a>
+    </nav>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <section class="hero">
+      <div>
+        <h2>Available now</h2>
+        <p>Tournaments, practice modes & classic games</p>
+      </div>
+    </section>
+
+    <section class="grid" id="game-grid">
+      <!-- Spalte 1 -->
+      <div class="tile" data-mode="x01">
+        <div>
+          <h3>X01</h3>
+          <small>301 / 501 • Double-Out</small>
+        </div>
+        <div class="actions">
+          <button class="btn primary" data-action="find">Find match</button>
+          <button class="btn" data-action="setup">Quick setup</button>
+        </div>
+      </div>
+
+      <div class="tile" data-mode="bermuda"><h3>Bermuda</h3></div>
+      <div class="tile" data-mode="around"><h3>Around the Clock</h3></div>
+
+      <!-- Spalte 2 -->
+      <div class="tile" data-mode="cricket">
+        <div><h3>Cricket / Tactics</h3><small>15–20 + Bull</small></div>
+      </div>
+      <div class="tile" data-mode="shanghai"><h3>Shanghai</h3></div>
+      <div class="tile" data-mode="round"><h3>Round the World</h3></div>
+
+      <!-- Spalte 3 -->
+      <div class="tile" data-mode="gotcha"><h3>Gotcha</h3></div>
+      <div class="tile" data-mode="countup"><h3>Count Up</h3></div>
+      <div class="tile" data-mode="random"><h3>Random Checkout</h3></div>
+
+      <!-- Extra -->
+      <div class="tile" data-mode="segment"><h3>Segment Training</h3></div>
+      <div class="tile" data-mode="bobs"><h3>Bob's 27</h3></div>
+    </section>
+  </main>
+
+  <!-- Right rail -->
+  <aside class="rail">
+    <h4>Friends</h4>
+    <div class="muted">Coming soon</div>
+  </aside>
+</div>
+
+<script>
+  // --- Minimaler Router: verarbeitet Hash-Fragment (#/setup?mode=x01) ---
+  function getHashParams(){
+    const h = location.hash.startsWith('#') ? location.hash.slice(1) : location.hash;
+    const [path, query] = h.split('?');
+    const params = new URLSearchParams(query || '');
+    return { path, params };
+  }
+  (function onLoadRoute(){
+    const { path, params } = getHashParams();
+    if(path){ console.log("Route:", path, "mode:", params.get('mode')); }
+  })();
+
+  // --- Kachel-Interaktion ---
+  const grid = document.getElementById('game-grid');
+  grid.addEventListener('click', (e)=>{
+    const btn = e.target.closest('button');
+    const tile = e.target.closest('.tile');
+    if(!tile) return;
+
+    const mode = tile.getAttribute('data-mode');
+
+    // Button: Find match
+    if(btn && btn.dataset.action === 'find'){
+      location.hash = `#/matchmaker?mode=${mode}`;
+      alert(`Matchmaking für: ${mode.toUpperCase()} (Stub)`);
+      return;
+    }
+    // Button: Quick setup
+    if(btn && btn.dataset.action === 'setup'){
+      location.hash = `#/setup?mode=${mode}`;
+      alert(`Quick-Setup für: ${mode.toUpperCase()} (Stub)`);
+      return;
+    }
+    // Klick auf die Kachel: default -> Setup
+    if(!btn){
+      location.hash = `#/setup?mode=${mode}`;
+      alert(`Öffne ${mode.toUpperCase()} Setup (Stub)`);
+    }
+  });
+</script>
+</body>
+</html>
