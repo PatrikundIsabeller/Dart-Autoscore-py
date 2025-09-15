@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TripleOne – Lobby</title>
+  <style>
+    :root{
+      --bg-a:#0c1444; --bg-b:#17366e;
+      --panel:rgba(18,31,69,.55);
+      --panel-border:#2b4a8f;
+      --text:#eef3ff; --muted:#a9b6d1;
+      --brand-a:#6ea8ff; --brand-b:#79e2ff;
+      --card:#214078cc; --card-border:#31579d;
+      --radius:14px; --radius-lg:16px; --shadow:0 14px 40px rgba(0,0,0,.35);
+      --sidebar-w: 240px; --gap:24px;
+      --container-max: 1060px;
+
+      --chip:#132c64a6; --chip-bd:#2a4a8a;
+      --btn:#1a356b; --btn-bd:#3a5fb2; --btn-hover:#21417c;
+      --btn-green: linear-gradient(180deg,#2aa66a,#1f8c58);
+      --btn-green-hover: linear-gradient(180deg,#31b976,#249b62);
+
+      --input-bg:#0f234d; --input-bd:#325092;
+    }
+
+    *{box-sizing:border-box} html,body{height:100%}
+    body{
+      margin:0; color:var(--text);
+      font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+      background:
+        radial-gradient(1100px 700px at 25% 0%, #233f87 0%, transparent 60%),
+        linear-gradient(180deg, var(--bg-a), var(--bg-b));
+    }
+
+    .app{ display:grid; gap:var(--gap); padding:var(--gap);
+      grid-template-columns: var(--sidebar-w) 1fr; min-height:100vh; }
+    @media (max-width: 680px){ .app{ grid-template-columns: 1fr } .sidebar{position:relative} }
+
+    .mainwrap{ display:flex; justify-content:center }
+    .main{ width:100%; max-width:var(--container-max) }
+    .title{ font-size:34px; font-weight:700; margin:6px 0 18px 6px; }
+
+    /* Sidebar */
+    .sidebar{ position:sticky; top:24px; align-self:start;
+      background:var(--panel); border:1px solid var(--panel-border);
+      border-radius:var(--radius-lg); padding:16px; backdrop-filter: blur(6px); height:fit-content; }
+    .brand{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+    .brand .logo{width:28px;height:28px;border-radius:8px;background:conic-gradient(from 0deg, var(--brand-a), var(--brand-b));box-shadow:var(--shadow)}
+    .brand h1{font-size:16px;margin:0;letter-spacing:.6px;font-weight:700}
+    .nav{display:flex;flex-direction:column;gap:6px}
+    .nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;text-decoration:none;color:var(--text);border:1px solid #2a4a8a;background:#132c64a6;border-radius:12px}
+    .nav a:hover{background:#1b376eb8}
+    .nav a.active{background:#244079;border-color:#3a5fb2}
+    .icon{width:18px;height:18px;opacity:.9}
+
+    /* Cards */
+    .grid{ display:grid; grid-template-columns: 360px 1fr; gap:16px; }
+    @media (max-width: 1020px){ .grid{ grid-template-columns: 1fr; } }
+    .card{ background:var(--card); border:1px solid var(--card-border);
+      border-radius:var(--radius-lg); box-shadow:var(--shadow); padding:14px; }
+    .card h3{ margin:6px 6px 10px; font-size:22px }
+    .details{ display:grid; grid-template-columns: 1fr 1fr; gap:8px 10px; padding:6px 6px 2px; }
+    .dl{ color:#bcd0ff } .dv{ color:#fff }
+
+    .row{ display:flex; align-items:center; gap:10px; }
+    select{
+      border:1px solid var(--input-bd); background:var(--input-bg); color:var(--text);
+      border-radius:10px; padding:8px 10px; outline:none; min-width:90%;
+    }
+    .btn{ appearance:none; border:1px solid var(--btn-bd);
+      background:var(--btn); color:var(--text);
+      border-radius:10px; padding:8px 12px; cursor:pointer; }
+    .btn:hover{ background:var(--btn-hover) }
+    .btn-icon{ width:32px; display:grid; place-items:center; padding:0; height: 32px; }
+
+    .players-head{ display:flex; align-items:center; gap:8px; margin:4px 0 10px 0 }
+    .players-table{ width:100%; border-collapse:collapse; }
+    .players-table th, .players-table td{ padding:8px 6px; border-bottom:1px solid rgba(255,255,255,.08) }
+    .players-table th{ text-align:left; color:#cfe0ff; font-weight:600 }
+    .num{ width:24px; color:#cfe0ff }
+    .chip{ display:inline-flex; align-items:center; gap:6px;
+      background:#132c64a6; border:1px solid #2a4a8a; padding:6px 10px; border-radius:999px; }
+    .chip .dot{ width:8px; height:8px; border-radius:50%; background:#ffd166 }
+    .board-chip{ display:inline-flex; align-items:center; gap:6px;
+      background:#132c64a6; border:1px solid #2a4a8a; padding:4px 8px; border-radius:999px; color:#d4e2ff; }
+    .actions-cell{ display:flex; gap:6px; justify-content:flex-end }
+    .act{ border:1px solid rgba(255,255,255,.2); background: rgba(255,255,255,.06); color:#fff; border-radius:8px; padding:4px 8px; cursor:pointer; }
+    .act:hover{ background: rgba(255,255,255,.12) }
+
+    .add-row{ display:flex; gap:8px; margin-top:12px }
+    .add-row input{ flex:1; border:1px solid var(--input-bd); background:var(--input-bg); color:var(--text); padding:8px 10px; border-radius:10px; outline:none; }
+
+    .stack{ display:flex; flex-direction:column; gap:10px }
+    .share{ display:flex; gap:8px; }
+    .share input{ flex:1; border:1px solid var(--input-bd); background:var(--input-bg); color:var(--text); padding:8px 10px; border-radius:10px; outline:none; }
+
+    .footer-row{ display:flex; align-items:center; gap:10px; margin-top:14px; }
+    .start{ flex:1; border:1px solid rgba(0,0,0,.2); color:#fff;
+      border-radius:12px; padding:12px 16px; cursor:pointer;
+      background:var(--btn-green); font-weight:600; text-align:center; }
+    .start:hover{ background:var(--btn-green-hover) }
+    .square{ width:34px; height:34px; border-radius:8px; cursor:pointer;
+      background:transparent; border:2px solid #ad3852; display:grid; place-items:center; }
+
+    /*.card.card-select {height: 150px;} */
+    .card.invite{ align-self: start; height: auto;}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="brand"><div class="logo"></div><h1>AUTODARTS</h1></div>
+      <nav class="nav">
+        <a href="play_dashboard.html"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>Play</a>
+        <a class="active" href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M7 4h10v2H7zm-2 5h14v2H5zm3 5h8v2H8z"/></svg>Matches</a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l3 7h7l-5.5 4 2 7-6.5-4.5L5.5 20l2-7L2 9h7z"/></svg>Tournaments</a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 13h8V3H3v10zm10 8h8V3h-8v18z"/></svg>Statistics</a>
+        <a href="#"><svg class="icon" viewBox="0 0 24 24" fill="currentColor"><path d="M3 20h18v-2H3v2zM5 4v12h14V4H5zm2 2h10v8H7V6z"/></svg>My boards</a>
+      </nav>
+    </aside>
+
+    <!-- Main -->
+    <div class="mainwrap">
+      <main class="main">
+        <div class="title">Lobby</div>
+
+        <div class="grid">
+          <!-- Left: Lobby details -->
+          <section class="card">
+            <h3>Lobby details</h3>
+            <div class="details" id="details"></div>
+          </section>
+
+          <!-- Right: Select board -->
+          <section class="card card-select">
+            <h3>Select board</h3>
+            <div class="row">
+              <select id="boardSelect">
+                <option value="manual">Manual</option>
+                <option value="keller">Keller</option>
+                <option value="living">Living Room</option>
+              </select>
+              <button class="btn btn-icon" id="btnRefresh" title="Refresh boards">⟳</button>
+            </div>
+          </section>
+
+          <!-- Left: Invite -->
+          <section class="card invite">
+            <h3>Invite friends</h3>
+            <div class="stack">
+              <div class="muted">Online (0)</div>
+              <div class="muted">or share link:</div>
+              <div class="share">
+                <input id="shareLink" readonly value="https://play.tripleone.local/lobby/ABC123" />
+                <button class="btn" id="copyLink">⧉</button>
+              </div>
+            </div>
+          </section>
+
+          <!-- Right: Players -->
+          <section class="card">
+            <h3>Players</h3>
+            <table class="players-table" id="playersTable">
+              <thead>
+                <tr>
+                  <th class="num">#</th>
+                  <th>PLAYER</th>
+                  <th>BOARD</th>
+                  <th style="width:140px;"></th>
+                </tr>
+              </thead>
+              <tbody id="playersBody"></tbody>
+            </table>
+
+            <div class="add-row">
+                <!-- Neu: list="savedPlayers" + datalist -->
+                <input id="playerName" list="savedPlayers" placeholder="Enter name for local player" />
+                <datalist id="savedPlayers"></datalist>
+                <button class="btn" id="btnAddLocal">+</button>
+                <button class="btn" id="btnAddBot">Add Bot</button>
+            </div>
+
+            <div class="footer-row">
+              <button class="start" id="startGame">Start game</button>
+              <button class="square" id="clearBtn" title="Clear players"></button>
+            </div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+  // --- Payload aus Session: { gameType, host, settings } ---
+  const payload = (() => {
+    try{
+      const p = sessionStorage.getItem('lobby_payload');
+      if(p) return JSON.parse(p);
+      // Backwards-compat: alte x01_settings
+      const s = sessionStorage.getItem('x01_settings');
+      if(s) return { gameType:'X01', host:(localStorage.getItem('host_name')||'PICUS'), settings: JSON.parse(s) };
+    }catch{}
+    return { gameType:'X01', host:'PICUS', settings:{} };
+  })();
+
+  // --- Helpers ---
+  function chip(name){ return `<span class="chip"><span class="dot"></span><b>${name}</b></span>`; }
+
+  function matchModeLabel(s){
+    if(!s || !s.matchMode || s.matchMode==='off') return 'Off';
+    if(s.matchMode==='legs'){
+      const n = s.legsToWin || 2;
+      return `First to ${n} ${n===1?'leg':'legs'}`;
+    }
+    const sets = s.setsToWin || 2;
+    const legs = s.legsPerSet || 2;
+    return `First to ${sets} set${sets>1?'s':''} / ${legs} leg${legs>1?'s':''}`;
+  }
+
+  function renderDetails(){
+    const s = payload.settings || {};
+    const d = document.getElementById('details');
+
+    // X01-spezifische Darstellung (1:1 Reihenfolge)
+    if((payload.gameType||'').toUpperCase()==='X01'){
+      const rows = [
+        ['Host', chip(payload.host||'PICUS')],
+        ['Type', 'X01'],
+        ['Base Score', s.base || '501'],
+        ['Bull Mode', s.bull || '25/50'],
+        ['In Mode', s.inMode || 'Straight'],
+        ['Max Rounds', s.maxRounds || '50'],
+        ['Out Mode', s.outMode || 'Double'],
+        ['Match Mode', matchModeLabel(s)]
+      ];
+      d.innerHTML = rows.map(([k,v])=>`<div class="dl">${k}</div><div class="dv">${v}</div>`).join('');
+      return;
+    }
+
+    // Default/Andere Spiele: alles generisch ausgeben
+    const generic = Object.entries(s).map(([k,v])=>[
+      k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase()), String(v)
+    ]);
+    const rows = [['Host',chip(payload.host||'PICUS')], ['Type', payload.gameType||'-'], ...generic];
+    d.innerHTML = rows.map(([k,v])=>`<div class="dl">${k}</div><div class="dv">${v}</div>`).join('');
+  }
+
+  // --- Persistente Spieler-Namen (localStorage) -------------------------
+  const STORAGE_KEY_SAVED_PLAYERS = 'saved_player_names';
+
+  function loadSavedPlayers(){
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY_SAVED_PLAYERS) || '[]'); }
+    catch { return []; }
+  }
+  function saveSavedPlayers(list){
+    localStorage.setItem(STORAGE_KEY_SAVED_PLAYERS, JSON.stringify(list));
+  }
+  function escapeHtml(s){
+    return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+  function renderSavedPlayersDatalist(names = loadSavedPlayers()){
+    const dl = document.getElementById('savedPlayers');
+    if(!dl) return;
+    dl.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+  }
+  function addSavedPlayer(name){
+    name = (name || '').trim();
+    if(!name) return;
+    const collator = new Intl.Collator('de', {sensitivity:'base'});
+    const list = loadSavedPlayers();
+    // dedupe (case-insensitiv)
+    if(!list.some(x => collator.compare(x, name) === 0)){
+      list.push(name);
+      list.sort(collator.compare);
+      saveSavedPlayers(list);
+      renderSavedPlayersDatalist(list);
+    }
+  }
+
+  // --- Players handling --------------------------------------------------
+  const players = [];
+  function addPlayer(name, bot=false){
+    if(!name) return;
+    players.push({name, bot, board: document.getElementById('boardSelect').value});
+    renderPlayers();
+  }
+  function removePlayer(i){ players.splice(i,1); renderPlayers(); }
+  function moveUp(i){ if(i>0){ [players[i-1],players[i]]=[players[i],players[i-1]]; renderPlayers(); } }
+  function moveDown(i){ if(i<players.length-1){ [players[i+1],players[i]]=[players[i],players[i+1]]; renderPlayers(); } }
+  function prettyBoard(v){ return v==='keller'?'Keller':(v==='living'?'Living':'Manual'); }
+  function chipHTML(name, bot){ return `<span class="chip"><span class="dot${bot?' bot':''}"></span><b>${name}</b></span>`; }
+  function renderPlayers(){
+    const tbody = document.getElementById('playersBody');
+    tbody.innerHTML = players.map((p,i)=>`
+      <tr>
+        <td class="num">${i+1}.</td>
+        <td>${chipHTML(p.name,p.bot)}</td>
+        <td><span class="board-chip">● ${prettyBoard(p.board)}</span></td>
+        <td class="actions-cell">
+          <button class="act" onclick="moveUp(${i})">↑</button>
+          <button class="act" onclick="moveDown(${i})">↓</button>
+          <button class="act" onclick="removePlayer(${i})">✕</button>
+        </td>
+      </tr>
+    `).join('');
+  }
+
+  // --- UI wiring --------------------------------------------------------
+  // Klick auf "+"
+  document.getElementById('btnAddLocal').addEventListener('click', ()=>{
+    const inp = document.getElementById('playerName');
+    const name = inp.value.trim();
+    if(!name) return;
+    addPlayer(name, false);
+    addSavedPlayer(name);          // <-- neu: für die Zukunft merken
+    inp.value=''; inp.focus();
+  });
+
+  // ENTER im Eingabefeld fügt ebenfalls hinzu
+  document.getElementById('playerName').addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      document.getElementById('btnAddLocal').click();
+    }
+  });
+
+  // Bots NICHT speichern
+  document.getElementById('btnAddBot').addEventListener('click', ()=>{
+    const n = players.filter(p=>p.bot).length + 1;
+    addPlayer('BOT '+n, true);
+  });
+
+  document.getElementById('clearBtn').addEventListener('click', ()=>{ players.length=0; renderPlayers(); });
+  document.getElementById('copyLink').addEventListener('click', ()=>{
+    const el = document.getElementById('shareLink');
+    el.select(); el.setSelectionRange(0, 99999); document.execCommand('copy');
+  });
+  document.getElementById('startGame').addEventListener('click', ()=>{
+    const data = { payload, players };
+    alert('Start game (stub)\n\n' + JSON.stringify(data, null, 2));
+  });
+
+  // --- Init: Details + Host als erster Spieler + Datalist füllen --------
+  (function init(){
+    renderDetails();
+
+    // Host als ersten Spieler aufnehmen
+    const hostName = payload.host || 'PICUS';
+    addPlayer(hostName, false);
+
+    // gespeicherte Namen ins Datalist schreiben & Host sicherstellen
+    renderSavedPlayersDatalist();
+    addSavedPlayer(hostName);
+  })();
+</script>
+
+</body>
+</html>

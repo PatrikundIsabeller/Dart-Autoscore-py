@@ -291,8 +291,12 @@
 
     // Open Lobby (Stub)
     document.getElementById('openLobby').addEventListener('click', ()=>{
-      const s = currentSettings();
-      alert("Open Lobby (stub)\n\n" + JSON.stringify(s, null, 2));
+      const settings = currentSettings();
+      const host = localStorage.getItem('host_name') || 'PICUS';  // später zentral setzen
+      const payload = { gameType: 'X01', host, settings };
+
+      sessionStorage.setItem('lobby_payload', JSON.stringify(payload));
+      window.location.href = 'lobby.html';
     });
   </script>
 </body>
