@@ -9,11 +9,15 @@
     --bg-a:#0c1444; --bg-b:#17366e;
     --text:#eef3ff; --muted:#a9b6d1;
     --panel:#1b2f60aa; --panel-bd:#2c4b8a;
-    --card:#203a73dd; --card-bd:#31579d; --radius:14px; --radius-lg:16px;
-    --shadow:0 14px 40px rgba(0,0,0,.35);
+    --card:#203a73dd; --card-bd:#31579d;
+    --radius:14px; --radius-lg:16px; --shadow:0 14px 40px rgba(0,0,0,.35);
     --sidebar-w:240px; --gap:24px; --container-max:1560px;
     --good:#2aa66a; --good2:#1f8c58;
+
+    --dart-w: 140px;
   }
+  .dart-icon{ width: var(--dart-w); height:auto; opacity:.85; display:block; }
+
   *{box-sizing:border-box} html,body{height:100%}
   body{
     margin:0; color:var(--text);
@@ -21,9 +25,11 @@
     background:radial-gradient(1100px 700px at 25% 0%, #233f87 0%, transparent 60%),
                linear-gradient(180deg, var(--bg-a), var(--bg-b));
   }
+
   .app{display:grid; gap:var(--gap); padding:var(--gap);
        grid-template-columns: var(--sidebar-w) 1fr; min-height:100vh;}
   @media (max-width: 680px){ .app{grid-template-columns:1fr} .sidebar{position:relative} }
+
   .sidebar{
     position:sticky; top:24px; align-self:start; height:fit-content;
     background:var(--panel); border:1px solid var(--panel-bd);
@@ -33,89 +39,150 @@
   .brand .logo{width:28px;height:28px;border-radius:8px;background:conic-gradient(from 0deg,#6ea8ff,#79e2ff);box-shadow:var(--shadow)}
   .brand h1{font-size:16px;margin:0;letter-spacing:.6px;font-weight:700}
   .nav{display:flex;flex-direction:column;gap:6px}
-  .nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;text-decoration:none;color:var(--text);border:1px solid #2a4a8a;background:#132c64a6;border-radius:12px}
+  .nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;text-decoration:none;color:#fff;border:1px solid #2a4a8a;background:#132c64a6;border-radius:12px}
   .nav a:hover{background:#1b376eb8}
   .nav a.active{background:#244079;border-color:#3a5fb2}
 
   .mainwrap{display:flex;justify-content:center}
   .main{width:100%; max-width:var(--container-max)}
+
   .toolbar{display:flex; gap:8px; flex-wrap:wrap; padding:2px 0 6px 2px}
   .pill{font-size:12px; padding:6px 8px; border:1px solid #3a5fb2; border-radius:12px; background:#18356e; color:#dbe7ff}
 
-  /* score cards row – bis zu 6 nebeneinander */
   .row{
     display:grid;
     grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap:14px; align-items:start
+    gap:14px; align-items:start;
   }
   .score{
     background:var(--card); border:2px solid var(--card-bd); border-radius:var(--radius-lg);
     box-shadow:var(--shadow); padding:10px 12px; transition:border-color .15s, box-shadow .15s;
   }
-  .score.active{ border-color:#ffffffaa; box-shadow:inset 0 0 0 3px rgba(255,255,255,.55), var(--shadow) }
-  .score .big{ font-size:clamp(36px, 8vw, 92px); line-height:1.1; font-weight:800; margin:4px 6px 6px }
+  .score.active{
+  border-color:#ffffffaa;
+  box-shadow:inset 0 0 0 3px rgba(255,255,255,.55), var(--shadow);
+}
+.score-body{ text-align:center; width:100%; }
+.score .big{
+  font-size:clamp(48px, 8vw, 120px);
+  line-height:1.05;
+  font-weight:800;
+  margin:6px 0 10px;
+}
+.score-meta{
+  display:flex;
+  gap:8px;
+  justify-content:center;
+  align-items:center;
+  margin-bottom:6px;
+}
+/* kleiner grüner Darts-Chip */
+.chip{
+  display:inline-flex;
+  align-items:center;
+  justify-content:center;
+  min-width:32px;
+  padding:2px 8px;
+  border-radius:10px;
+  background:rgba(16,185,129,0.25);
+  border:1px solid rgba(16,185,129,0.4);
+  color:#bef7dd;
+  font-weight:700;
+  font-size:14px;
+}
+
+/* Name-Tag wie gehabt */
+.tag{
+  display:inline-flex; align-items:center; gap:6px;
+  background:#132c64a6; border:1px solid #2a4a8a; padding:4px 8px; border-radius:999px;
+}
+.tag .dot{width:8px;height:8px;border-radius:50%;background:#ffd166}
+
+/* Mini-Zeile: #Besuche | Ø avg */
+.score-sub{
+  color:#cfe0ff;
+  opacity:.9;
+  font-size:14px;
+}
   .meta{display:flex; align-items:center; gap:8px; padding:6px 8px}
   .tag{display:inline-flex; align-items:center; gap:6px; background:#132c64a6; border:1px solid #2a4a8a; padding:4px 8px; border-radius:999px}
   .tag .dot{width:8px; height:8px; border-radius:50%; background:#ffd166}
 
-  /* lanes: SUM + 3 dart slots */
-  .lanes{
-    display:grid; grid-template-columns: 240px 1fr 1fr 1fr; gap:14px; margin:10px 0 16px
-  }
+  .lanes{ display:grid; grid-template-columns: 240px 1fr 1fr 1fr; gap:14px; margin:10px 0 16px }
   @media (max-width: 960px){ .lanes{ grid-template-columns: 1fr; } }
+
   .sumBox{
     background:var(--panel); border:1px solid var(--panel-bd); border-radius:12px;
     height:56px; display:grid; place-items:center; color:#fff; font-weight:700; font-size:36px;
   }
   .lane{
-  position:relative;
-  background:var(--panel); border:1px solid var(--panel-bd);
-  border-radius:12px; height:56px; display:grid; place-items:center;
-}
-
-.dart-icon{
-  width:var(--dart-w); height:var(--dart-h); opacity:.75;
-  background-color: var(--dart-color);
-  -webkit-mask: url("icons/dart.svg") center / contain no-repeat;
-          mask: url("icons/dart.svg") center / contain no-repeat;
-}
-
-.dart-label{
-  position:absolute; inset:0; display:grid; place-items:center;
-  font-size:26px; font-weight:700; color:#eaf2ff; letter-spacing:.5px;
-}
-  /* hübsches Dart-Icon (inline SVG) */
-  .lane svg{ width:120px; height:22px; opacity:.65 }
+    position:relative;
+    background:var(--panel); border:1px solid var(--panel-bd);
+    border-radius:12px; height:56px; display:grid; place-items:center;
+  }
+  .dart-icon{ width:var(--dart-w); height:auto; opacity:.85; display:block; }
   .dart-label{
     position:absolute; inset:0; display:grid; place-items:center;
     font-size:26px; font-weight:700; color:#eaf2ff; letter-spacing:.5px;
+    opacity:0; transition:opacity .12s ease;
   }
 
-  /* pad */
   .pad{
     background:var(--card); border:1px solid var(--card-bd); border-radius:var(--radius-lg);
-    box-shadow:var(--shadow); padding:10px; max-width:720px; margin:0 auto;
+    box-shadow:var(--shadow); padding:14px; max-width:720px; margin:0 auto;
   }
-  .pad .head{display:grid; grid-template-columns: 1fr repeat(5, 1fr); gap:8px; padding:4px}
-  .pad .grid{display:grid; grid-template-columns: 1fr repeat(5, 1fr); gap:8px; padding:4px}
+
+  /* Tastatur-Grid: 1 Spalte links (Miss/25), 5 Zahlen-Spalten */
+  .keypad{
+  display:grid;
+  grid-template-columns: 136px repeat(5, 1fr);
+  gap:18px;
+}
+
+.chakra-button{          /* Basis */
+  display:flex; align-items:center; justify-content:center;
+  height:56px; padding:0 14px; border-radius:12px;
+  background:#1d2f58; border:1px solid #28457f; color:#e9efff; font-weight:700;
+}
+.chakra-button:hover{ background:#223a6e; }
+
+/* Header-Pills (Double/Triple) */
+.keyhead{ height:46px; border-radius:999px; background:#163a78; }
+.chakra-button.is-active{ outline:2px solid #6ea8ff; }
+
+/* Seitenspalte (Miss/25) – gleiche Optik, höher */
+.side{ height:78px; border-radius:12px; background:#163a78; }
+
+/* Zahlen-Keys */
+.key{ height:78px; border-radius:14px; background:#163066; }
+
+  /* Header-Toggles */
+  .hcell{ display:flex; align-items:center; justify-content:center; color:#e7eeff; font-weight:700; }
+  .toggle{
+    border:1px solid #2d4f94; background:#163a78; border-radius:999px; cursor:pointer;
+    height:48px; width:100%;
+  }
+  .toggle.active{ outline:2px solid #6ea8ff }
+
+  /* Side-Toggles (Miss / 25) – gleicher Stil, höhere Zelle */
+  .toggle.side{
+    height:82px; border-radius:12px; font-weight:700;
+  }
+
   .cell{
     border:1px solid #2d4f94; background:#163066; color:#e7eeff; border-radius:12px;
-    height:60px; display:grid; place-items:center; cursor:pointer; user-select:none;
+    height:82px; display:grid; place-items:center; cursor:pointer; user-select:none; text-align:center;
+    font-weight:600;
   }
-  .cell.label{background:transparent; border-color:transparent; color:#c7d3f1; cursor:default}
-  .cell.small{height:40px}
-  .cell.head{background:#163a78; font-weight:700}
-  .cell.active{outline:2px solid #6ea8ff}
-  .pad .actions{display:flex; justify-content:space-between; gap:10px; margin-top:8px}
-  .btn{appearance:none; border:1px solid #3a5fb2; background:#1a356b; color:#fff; border-radius:12px; padding:12px 16px; cursor:pointer; min-width:140px}
+  .blank{ visibility:hidden }
+  .actions{display:flex; justify-content:space-between; gap:10px; margin-top:8px}
+  .btn{appearance:none; border:1px solid #3a5fb2; background:#1a356b; color:#fff; border-radius:14px; padding:12px 16px; cursor:pointer; min-width:140px; height:48px}
   .btn:hover{background:#21417c}
-  .btn.primary{background:linear-gradient(180deg, var(--good), var(--good2)); border:none}
-  .btn.primary:hover{filter:brightness(1.05)}
+  .btn.primary{background:linear-gradient(180deg, var(--good), var(--good2)); border:none; box-shadow: inset 0 -2px 0 rgba(0,0,0,.15)}
 </style>
 </head>
 <body>
 <div class="app">
-  <!-- Sidebar -->
   <aside class="sidebar">
     <div class="brand"><div class="logo"></div><h1>AUTODARTS</h1></div>
     <nav class="nav">
@@ -124,85 +191,59 @@
     </nav>
   </aside>
 
-  <!-- Main -->
   <div class="mainwrap">
     <main class="main">
-      <!-- toolbar pills -->
       <div class="toolbar" id="toolbar"></div>
 
-      <!-- score row -->
-      <div class="row" id="scoreRow"><!-- filled by JS --></div>
+      <div class="row" id="scoreRow"></div>
 
-      <!-- lanes: SUM + 3 dart slots -->
       <div class="lanes">
         <div class="sumBox" id="sumBox">0</div>
+        <!-- in deinen Lanes: KEIN inline-style nötig -->
+          <div class="lane"><img class="dart-icon" alt=""><div class="dart-label"></div></div>
+          <div class="lane"><img class="dart-icon" alt=""><div class="dart-label"></div></div>
+          <div class="lane"><img class="dart-icon" alt=""><div class="dart-label"></div></div>
+      </div>
 
-        <div class="lane" id="lane0">
-            <div class="dart-icon" aria-hidden="true"></div>
-            <div class="dart-label"></div>
-        </div>
-        <div class="lane" id="lane1">
-            <div class="dart-icon" aria-hidden="true"></div>
-            <div class="dart-label"></div>
-        </div>
-        <div class="lane" id="lane2">
-            <div class="dart-icon" aria-hidden="true"></div>
-            <div class="dart-label"></div>
-        </div>
-
-
-      <!-- input pad -->
       <section class="pad">
-        <div class="head">
-          <div class="cell label"></div>
-          <div class="cell head" id="hSingle">Single</div>
-          <div class="cell head" id="hDouble">Double</div>
-          <div class="cell head" id="hTriple">Triple</div>
-          <div class="cell label"></div>
-          <div class="cell label"></div>
-        </div>
-
-        <div class="grid" id="padGrid">
-          <!-- Zeile: Miss -->
-          <div class="cell label">Miss</div>
-          <div class="cell small" data-v="0">0</div>
-          <div class="cell small" data-v="0">0</div>
-          <div class="cell small" data-v="0">0</div>
-          <div class="cell label"></div>
-          <div class="cell label"></div>
-
-          <!-- 20..16 -->
-          <div class="cell label">S20–S16</div>
-          <div class="cell" data-n="20">S20</div>
-          <div class="cell" data-n="19">S19</div>
-          <div class="cell" data-n="18">S18</div>
-          <div class="cell" data-n="17">S17</div>
-          <div class="cell" data-n="16">S16</div>
-
-          <!-- 15..11 -->
-          <div class="cell label">S15–S11</div>
-          <div class="cell" data-n="15">S15</div>
-          <div class="cell" data-n="14">S14</div>
-          <div class="cell" data-n="13">S13</div>
-          <div class="cell" data-n="12">S12</div>
-          <div class="cell" data-n="11">S11</div>
-
-          <!-- 10..6 -->
-          <div class="cell label">S10–S6</div>
-          <div class="cell" data-n="10">S10</div>
-          <div class="cell" data-n="9">S9</div>
-          <div class="cell" data-n="8">S8</div>
-          <div class="cell" data-n="7">S7</div>
-          <div class="cell" data-n="6">S6</div>
-
-          <!-- 5..1 -->
-          <div class="cell label">S5–S1</div>
-          <div class="cell" data-n="5">S5</div>
-          <div class="cell" data-n="4">S4</div>
-          <div class="cell" data-n="3">S3</div>
-          <div class="cell" data-n="2">S2</div>
-          <div class="cell" data-n="1">S1</div>
-        </div>
+        <div class="keypad" id="padGrid">
+          <!-- Kopfzeile -->
+          <div></div>
+          <button class="chakra-button keyhead" id="tDouble" style="grid-column:2 / span 2">Double</button>
+          <button class="chakra-button keyhead" id="tTriple" style="grid-column:4 / span 3">Triple</button>
+        
+          <!-- Zeile 1: 25 links, S20–S16 rechts -->
+          <button class="chakra-button side" id="btn25">25</button>
+          <button class="chakra-button key" data-n="20">S20</button>
+          <button class="chakra-button key" data-n="19">S19</button>
+          <button class="chakra-button key" data-n="18">S18</button>
+          <button class="chakra-button key" data-n="17">S17</button>
+          <button class="chakra-button key" data-n="16">S16</button>
+        
+          <!-- Zeile 2: Miss links, S15–S11 rechts -->
+          <button class="chakra-button side" id="btnMiss">Miss</button>
+          <button class="chakra-button key" data-n="15">S15</button>
+          <button class="chakra-button key" data-n="14">S14</button>
+          <button class="chakra-button key" data-n="13">S13</button>
+          <button class="chakra-button key" data-n="12">S12</button>
+          <button class="chakra-button key" data-n="11">S11</button>
+        
+          <!-- Zeile 3: S10–S6 (linke Spalte leer) -->
+          <div></div>
+          <button class="chakra-button key" data-n="10">S10</button>
+          <button class="chakra-button key" data-n="9">S9</button>
+          <button class="chakra-button key" data-n="8">S8</button>
+          <button class="chakra-button key" data-n="7">S7</button>
+          <button class="chakra-button key" data-n="6">S6</button>
+        
+          <!-- Zeile 4: S5–S1 (linke Spalte leer) -->
+          <div></div>
+          <button class="chakra-button key" data-n="5">S5</button>
+          <button class="chakra-button key" data-n="4">S4</button>
+          <button class="chakra-button key" data-n="3">S3</button>
+          <button class="chakra-button key" data-n="2">S2</button>
+          <button class="chakra-button key" data-n="1">S1</button>
+        </div>        
 
         <div class="actions">
           <button class="btn" id="btnUndo">↩︎ Undo</button>
@@ -214,148 +255,206 @@
 </div>
 
 <script>
-  // ----- Payload laden -----
+  // ------- Payload -------
   const game = (() => {
-    try{
-      const gp = sessionStorage.getItem('game_payload');
-      if(gp) return JSON.parse(gp);
-    }catch{}
-    return { gameType:'X01', settings:{base:'501', inMode:'Straight', outMode:'Double', maxRounds:'50'}, players:[{name:'PICUS'},{name:'PATRICK'}] };
+    try { const p = sessionStorage.getItem('game_payload'); if (p) return JSON.parse(p); } catch {}
+    return { gameType:'X01', settings:{base:'501', inMode:'Straight', outMode:'Double', maxRounds:'50'},
+             players:[{name:'PICUS'},{name:'PATRICK'}] };
+  })();
+  const BASE = parseInt(String(game.settings.base||'501'),10)||501;
+  const MAXR = parseInt(String(game.settings.maxRounds||'50'),10)||50;
+
+  // ------- Toolbar -------
+  function addPill(t){
+    const el=document.createElement('span');
+    el.className='pill'; el.textContent=t;
+    document.getElementById('toolbar').appendChild(el);
+  }
+  (function(){
+    const m={Straight:'S',Double:'D',Master:'M'};
+    addPill('X01'); addPill(String(BASE));
+    addPill(`${m[game.settings.inMode]||'S'}I-${m[game.settings.outMode]||'S'}O`);
+    if(game.settings.matchMode==='sets') addPill('S'+(game.settings.setsToWin||2));
+    else if(game.settings.matchMode==='legs') addPill('L'+(game.settings.legsToWin||2));
+    addPill('R1/'+MAXR);
   })();
 
-  // Settings normalisieren
-  const BASE = parseInt(String(game.settings.base||'501'), 10) || 501;
-  const MAXR = parseInt(String(game.settings.maxRounds||'50'), 10) || 50;
-
-  // ----- Toolbar-Pills rendern -----
-  function modePill(inM, outM){
-    const map = {Straight:'S', Double:'D', Master:'M'};
-    return `${map[inM]||'S'}I-${map[outM]||'S'}O`;
-  }
-  function addPill(text){ const s = document.createElement('span'); s.className='pill'; s.textContent=text; document.getElementById('toolbar').appendChild(s); }
-  addPill('X01'); addPill(String(BASE));
-  addPill(modePill(game.settings.inMode, game.settings.outMode));
-  if(game.settings.matchMode === 'sets'){ addPill('S'+(game.settings.setsToWin||2)); }
-  else if(game.settings.matchMode === 'legs'){ addPill('L'+(game.settings.legsToWin||2)); }
-  addPill('R1/'+MAXR);
-
-  // ----- Spieler/Scorecards -----
+  // ------- State -------
   const state = {
-    players: game.players.map(p => ({ name: p.name, score: BASE })),
+    players: game.players.map(p=>({name:p.name, score:BASE})),
     curPlayer: 0,
-    darts: [],   // aktuelle Aufnahme (max 3), Elemente: {ring,n,label,value}
-    history: []  // {player, ring,n,label,value}
+    darts: [],   // max 3: {ring,n,label,value}
+    history: []  // {type:'THROW',player,...} | {type:'NEXT',prev}
   };
 
+
+  // --- Scorecard HTML ----------------------------------------------------
   function scoreCard(p, i){
+    const s = playerStats(i);
     return `
-      <section class="score ${i===state.curPlayer?'active':''}" data-idx="${i}">
-        <div class="big" id="sc${i}">${p.score}</div>
-        <div class="meta">
-          <span class="tag"><span class="dot"></span> <b>${p.name}</b></span>
+      <section class="score ${i===state.curPlayer ? 'active' : ''}">
+        <div class="score-body">
+          <div class="big" id="sc${i}">${p.score}</div>
+
+          <div class="score-meta">
+            <span class="chip" title="geworfene Darts">${s.darts}</span>
+            <span class="tag"><span class="dot"></span><b>${p.name}</b></span>
+          </div>
+
+          <div class="score-sub">#${s.visits} | Ø ${s.threeAvg} / ${s.oneAvg}</div>
         </div>
       </section>
     `;
   }
+
+  // --- Stats pro Spieler -------------------------------------------------
+  function playerStats(idx){
+    // geworfene Darts & Besuche (Aufnahmen)
+    let darts = 0;
+    for(const h of state.history){
+      if(h.type === 'THROW' && h.player === idx) darts++;
+    }
+    const visits = Math.ceil(darts / 3);
+
+    const scored = BASE - state.players[idx].score;           // erzielte Punkte
+    const oneAvg = darts > 0 ? (scored / darts) : 0;          // 1-Dart-Ø
+    const threeAvg = darts > 0 ? oneAvg * 3 : 0;              // 3-Dart-Ø
+
+    return {
+      darts,
+      visits,
+      oneAvg: oneAvg.toFixed(1),
+      threeAvg: threeAvg.toFixed(1)
+    };
+  }
+
   function renderScores(){
     const row = document.getElementById('scoreRow');
     row.innerHTML = state.players.map(scoreCard).join('');
   }
-  renderScores();
 
-  // ----- Lanes & Summe -----
+// call initially
+renderScores();
+
+  // ------- Lanes + Sum -------
   const sumBox = document.getElementById('sumBox');
-  const laneBoxes = [...document.querySelectorAll('.lane')]; // 3 Container
-
+  const laneEls = [...document.querySelectorAll('.lane')];
   function refreshLanes(){
-    laneBoxes.forEach((box, i) => {
-      const icon = box.querySelector('svg');
+    laneEls.forEach((box,i)=>{
+      const icon = box.querySelector('.dart-icon');
       const lbl  = box.querySelector('.dart-label');
       const d = state.darts[i];
-
-      if(d){ // Wurf vorhanden -> Label zeigen, Icon ausblenden
-        lbl.textContent = d.label;
-        lbl.style.opacity = 1;
-        icon.style.opacity = 0;
-      }else{ // leer -> Icon sichtbar, Label leer
-        lbl.textContent = '';
-        lbl.style.opacity = 0;
-        icon.style.opacity = .65;
-      }
+      if(d){ lbl.textContent = d.label; lbl.style.opacity = 1; icon.style.opacity = 0; }
+      else { lbl.textContent = '';       lbl.style.opacity = 0; icon.style.opacity = .85; }
     });
-
-    // Summe aktualisieren
     const s = state.darts.reduce((a,t)=>a + (t?.value||0), 0);
     sumBox.textContent = String(s);
   }
   refreshLanes();
 
-  // ----- Eingabepad: Ring-Modus (Single/Double/Triple) -----
-  let ring = 'S';
-  const hSingle = document.getElementById('hSingle');
-  const hDouble = document.getElementById('hDouble');
-  const hTriple = document.getElementById('hTriple');
-  function markHead(){
-    [hSingle,hDouble,hTriple].forEach(h=>h.classList.remove('active'));
-    ({'S':hSingle,'D':hDouble,'T':hTriple}[ring]).classList.add('active');
-  }
-  markHead();
-  hSingle.onclick = ()=>{ ring='S'; markHead(); };
-  hDouble.onclick = ()=>{ ring='D'; markHead(); };
-  hTriple.onclick = ()=>{ ring='T'; markHead(); };
+  // --- Dart-Icon als Data-URI (dein SVG) ------------------------------
+const DART_SVG = "data:image/svg+xml,%3c?xml%20version='1.0'%20encoding='UTF-8'?%3e%3csvg%20id='Laag_1'%20data-name='Laag%201'%20xmlns='http://www.w3.org/2000/svg'%20version='1.1'%20viewBox='0%200%20477%20102'%3e%3cdefs%3e%3cstyle%3e%20.cls-1%20{%20fill:%20%23fff;%20stroke-width:%200px;%20}%20%3c/style%3e%3c/defs%3e%3cg%20id='Union_1'%20data-name='Union%201'%3e%3cpath%20class='cls-1'%20d='M26.56.5h53.65l.14.11,55.78,45,42.2-.07,42.49.07c.95-.56,6.88-4,10.06-4h152.73c2.11,0,4.43.36,6.9,1.07,1.96.56,4.03,1.35,6.13,2.34,3.16,1.48,5.42,2.94,5.98,3.31,2.04,0,23.83-.1,40.68-.1,10.34,0,16.83.03,19.29.1,5.75.16,13.13,1.98,13.95,2.19h.02s-.12.48-.12.48h0s.12.5.12.5h-.02c-.82.21-8.2,2.02-13.95,2.19-2.45.07-8.94.1-19.29.1-16.85,0-38.64-.09-40.68-.1-.56.37-2.82,1.83-5.98,3.31-3.32,1.55-8.27,3.41-13.03,3.41h-152.73c-3.19,0-9.11-3.44-10.06-4l-42.49.07-42.2-.07-55.78,45-.14.11H26.56l-.14-.27L1,51.23l-.12-.23.12-.23L26.43.77l.14-.27Z'%20/%3e%3c/g%3e%3c/svg%3e";
 
-  // ----- Klicks auf Zellen -----
-  document.getElementById('padGrid').addEventListener('click', (e)=>{
-    const cell = e.target.closest('.cell');
-    if(!cell) return;
+document.querySelectorAll('.dart-icon').forEach(img => {
+  img.src = DART_SVG;
+});
 
-    if(state.darts.length >= 3) return; // max 3 pro Aufnahme
 
-    // Miss?
-    if(cell.dataset.v){
-      addThrow({ ring:'M', n:0, value:0, label:'0' });
+  // ------- Ringwahl (Single default) -------
+  let ring = 'S';                                // <<< WICHTIG: fehlte bei dir
+  const btnD = document.getElementById('tDouble');
+  const btnT = document.getElementById('tTriple');
+
+  function setRing(r){
+    if(ring === r){
+      ring = 'S';
+      btnD.classList.remove('is-active');
+      btnT.classList.remove('is-active');
       return;
     }
+    ring = r;
+    btnD.classList.toggle('is-active', r==='D');
+    btnT.classList.toggle('is-active', r==='T');
+  }
+  btnD.onclick = () => setRing('D');
+  btnT.onclick = () => setRing('T');
 
-    // Nummer + Ring
-    if(cell.dataset.n){
-      const n = parseInt(cell.dataset.n,10);
-      const mult = ring === 'D' ? 2 : ring === 'T' ? 3 : 1;
-      addThrow({ ring, n, value: mult * n, label: `${ring}${n}` });
+  // ------- Miss & 25 Buttons (links) -------
+  document.getElementById('btnMiss').onclick = () =>
+    addThrow({ring:'M', n:0, value:0, label:'0'});
+
+  document.getElementById('btn25').onclick  = () => {
+    const isD = (ring==='D');
+    addThrow({ring:isD?'D':'S', n:25, value:isD?50:25, label:isD?'D25':'25'});
+  };
+
+  // ------- Feld-Klicks (vereinheitlicht auf [data-n]) -------
+  document.getElementById('padGrid').addEventListener('click', (e)=>{
+    const key = e.target.closest('[data-n]');
+    if(!key || state.darts.length >= 3) return;
+
+    const n = parseInt(key.dataset.n, 10);
+    // 25 nur über die linke Spalte – falls trotzdem vorhanden:
+    if(n === 25){
+      const isD = (ring === 'D');
+      addThrow({ring:isD?'D':'S', n:25, value:isD?50:25, label:isD?'D25':'25'});
+      return;
     }
+    const mult = ring==='D' ? 2 : ring==='T' ? 3 : 1;
+    addThrow({ring, n, value: mult*n, label: `${ring}${n}`});
   });
 
+  // ------- Common actions -------
   function addThrow(obj){
     state.darts.push(obj);
-    state.history.push({player: state.curPlayer, ...obj});
-    // Score berechnen
-    const p = state.players[state.curPlayer];
-    p.score = Math.max(0, p.score - obj.value);
+    state.history.push({type:'THROW', player:state.curPlayer, ...obj});
+    state.players[state.curPlayer].score = Math.max(0, state.players[state.curPlayer].score - obj.value);
     renderScores(); refreshLanes();
   }
 
   function undo(){
-    const last = state.history.pop();
-    if(!last) return;
-
-    if(last.player !== state.curPlayer){
-      state.curPlayer = last.player;
-      state.darts = []; // neue Aufnahme starten
-    }else{
-      state.darts.pop();
+    const last = state.history.pop(); if(!last) return;
+    if(last.type==='NEXT'){
+      state.curPlayer = last.prev;
+      state.darts = collectTurn(state.curPlayer);
+      renderScores(); refreshLanes(); return;
     }
     state.players[last.player].score += last.value;
+    if(last.player===state.curPlayer){ state.darts.pop(); }
+    else { state.curPlayer = last.player; const t = collectTurn(state.curPlayer); t.pop(); state.darts = t; }
     renderScores(); refreshLanes();
   }
 
   function nextPlayer(){
-    state.curPlayer = (state.curPlayer + 1) % state.players.length;
-    state.darts = [];            // neue Aufnahme -> Anzeige leeren & Icons zurück
-    renderScores(); refreshLanes();
+    state.history.push({type:'NEXT', prev:state.curPlayer});
+    state.curPlayer = (state.curPlayer+1)%state.players.length;
+    state.darts = []; renderScores(); refreshLanes();
+  }
+
+  function collectTurn(player){
+    const res=[]; 
+    for(let i=state.history.length-1;i>=0;i--){
+      const h=state.history[i];
+      if(h.type==='NEXT'){ if(h.prev===player) break; else continue; }
+      if(h.player===player) res.unshift({ring:h.ring,n:h.n,label:h.label,value:h.value});
+    }
+    return res.slice(-3);
   }
 
   document.getElementById('btnUndo').onclick = undo;
   document.getElementById('btnNext').onclick = nextPlayer;
 </script>
+
 </body>
 </html>
+
+
+
+
+
+
+
+
+
+
+

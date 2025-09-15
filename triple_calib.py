@@ -413,12 +413,22 @@ class DragBoard(QtWidgets.QLabel):
         self.setStyleSheet(
             "QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}"
         )
+        self.setMouseTracking(True)  # Move-Events auch ohne gedrückte Taste
 
-        # State
+        # ---- State ----
         self.frame: Optional[np.ndarray] = None
+        # Startpunkte: grob um das Bild platziert (oben, rechts, unten, links)
         self.points = np.array([[300, 120], [540, 300], [300, 480], [60, 300]], dtype=np.float32)
         self._drag_idx = -1
         self._active_idx = 0
+
+        # Marker-Style
+        self.pt_radius = 8           # Radius der Markerpunkte (px, im Widget)
+        self.pt_thickness = 2        # Linienstärke
+        self.cross_len = 7           # Länge der Crosshair-Linien (px)
+        self.color_point = QtGui.QColor("#22c55e")  # grün
+        self.color_active = QtGui.QColor("#f59e0b") # amber für aktiven Punkt
+        self.color_label = QtGui.QColor("#e5e7eb")  # hellgrau für Text
 
         # --- Magnifier (Lupe) ---
         self._mag_active = False
@@ -478,7 +488,7 @@ class DragBoard(QtWidgets.QLabel):
 
     def set_snapshot_from_current_frame(self):
         """Nimmt ein Graustufen-Snapshot aus self.frame (falls vorhanden)."""
-        if self.frame is not None:
+        if self.frame is not None and self.frame.size:
             self._snapshot_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
 
     def recompute_homography(self, refine: bool = True):
@@ -489,7 +499,7 @@ class DragBoard(QtWidgets.QLabel):
         if self.points.shape != (4, 2):
             return
         gray = self._snapshot_gray
-        if gray is None and self.frame is not None:
+        if gray is None and self.frame is not None and self.frame.size:
             gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
         if gray is None:
             return
@@ -508,6 +518,16 @@ class DragBoard(QtWidgets.QLabel):
             self.H_tplPx2img = None
             self._h_dirty = True
 
+    def homography(self) -> Optional[np.ndarray]:
+        """
+        Kompatibilitäts-API: stellt sicher, dass H gültig ist, und gibt H_tplPx2img zurück.
+        (Wird z.B. in CamPanel.current_overlay_h() / current_world_h() aufgerufen.)
+        """
+        if self.H_tplPx2img is None or self._h_dirty:
+            self.set_snapshot_from_current_frame()
+            self.recompute_homography(refine=True)
+        return self.H_tplPx2img
+
     # ----- Painting -----
     def _paint_pixmap(self, p: QtGui.QPainter, pm: QtGui.QPixmap):
         rect = self.rect()
@@ -517,8 +537,7 @@ class DragBoard(QtWidgets.QLabel):
         ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
         p.drawPixmap(QtCore.QRectF(ox, oy, dw, dh), pm, QtCore.QRectF(0, 0, ps.width(), ps.height()))
         return scale, ox, oy, ps
-    
-    # >>> HIER EINFÜGEN: Helper Bild->Widget-Koordinaten <<<
+
     def _img_to_widget(self, x_img: float, y_img: float, ox: float, oy: float,
                        scale: float, ps: QtCore.QSize) -> tuple[float, float]:
         """Mapt Bildkoordinate (Pixel im Kameraframe) in Widgetkoordinate."""
@@ -526,14 +545,14 @@ class DragBoard(QtWidgets.QLabel):
         x = ox + (x_img / fw) * (ps.width() * scale)
         y = oy + (y_img / fh) * (ps.height() * scale)
         return float(x), float(y)
-    
+
     def _draw_magnifier(self, p: QtGui.QPainter, ox: float, oy: float,
                         scale: float, ps: QtCore.QSize):
-        if not self._mag_active or self.frame is None:
+        if not self._mag_active or self.frame is None or not self.frame.size:
             return
 
         xi, yi = self._mag_last_img
-        dst_d = int(self._mag_size)               # Durchmesser on-screen
+        dst_d = int(self._mag_size)                 # Durchmesser on-screen
         zoom   = float(self._mag_zoom)
         src_d  = max(12, int(round(dst_d / zoom)))  # Kantenlänge der Quelle (quadratisch)
         h, w = self.frame.shape[:2]
@@ -565,37 +584,36 @@ class DragBoard(QtWidgets.QLabel):
         path = QtGui.QPainterPath()
         path.addEllipse(QtCore.QRectF(x_draw, y_draw, dst_d, dst_d))
 
-        # Drop-Shadow
         p.save()
-        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
-        shadow = QtGui.QColor(0, 0, 0, 120)
-        p.fillPath(path.translated(2, 2), shadow)
+        try:
+            p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
 
-        # Clipping und Patch malen
-        p.setClipPath(path)
-        p.drawPixmap(QtCore.QRectF(x_draw, y_draw, dst_d, dst_d), pm,
-                    QtCore.QRectF(0, 0, pm.width(), pm.height()))
-        p.setClipping(False)
+            # Drop-Shadow
+            shadow = QtGui.QColor(0, 0, 0, 120)
+            p.fillPath(path.translated(2, 2), shadow)
 
-        # Rand
-        p.setPen(QtGui.QPen(QtGui.QColor("#10b981"), 2))  # teal/grün
-        p.drawPath(path)
+            # Clipping und Patch malen
+            p.setClipPath(path)
+            p.drawPixmap(QtCore.QRectF(x_draw, y_draw, dst_d, dst_d), pm,
+                         QtCore.QRectF(0, 0, pm.width(), pm.height()))
+            p.setClipping(False)
 
-        # Crosshair
-        if self._mag_crosshair:
-            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 230), 1))
-            cx2 = x_draw + dst_d * 0.5
-            cy2 = y_draw + dst_d * 0.5
-            # horizontale/vertikale Linien (kurz)
-            L = dst_d * 0.45
-            p.drawLine(QtCore.QPointF(cx2 - L, cy2), QtCore.QPointF(cx2 + L, cy2))
-            p.drawLine(QtCore.QPointF(cx2, cy2 - L), QtCore.QPointF(cx2, cy2 + L))
-            # kleine Mitte
-            p.setBrush(QtGui.QColor(255, 255, 255, 220))
-            p.drawEllipse(QtCore.QPointF(cx2, cy2), 2, 2)
+            # Rand
+            p.setPen(QtGui.QPen(QtGui.QColor("#10b981"), 2))  # teal/grün
+            p.drawPath(path)
 
-        p.restore()
-
+            # Crosshair in der Lupe
+            if self._mag_crosshair:
+                p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 230), 1))
+                cx2 = x_draw + dst_d * 0.5
+                cy2 = y_draw + dst_d * 0.5
+                L = dst_d * 0.45
+                p.drawLine(QtCore.QPointF(cx2 - L, cy2), QtCore.QPointF(cx2 + L, cy2))
+                p.drawLine(QtCore.QPointF(cx2, cy2 - L), QtCore.QPointF(cx2, cy2 + L))
+                p.setBrush(QtGui.QColor(255, 255, 255, 220))
+                p.drawEllipse(QtCore.QPointF(cx2, cy2), 2, 2)
+        finally:
+            p.restore()
 
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
@@ -603,7 +621,7 @@ class DragBoard(QtWidgets.QLabel):
             QtGui.QPainter.RenderHint.Antialiasing | QtGui.QPainter.RenderHint.SmoothPixmapTransform
         )
 
-        if self.frame is None:
+        if self.frame is None or not self.frame.size:
             p.setPen(QtGui.QPen(QtGui.QColor("#aaa")))
             p.drawText(self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter, "No signal")
             return
@@ -614,51 +632,69 @@ class DragBoard(QtWidgets.QLabel):
         # Overlay: NUR vorhandenes H benutzen (keine Neuberechnung hier!)
         H_tpl = self.H_tplPx2img
         if H_tpl is not None:
-            h, w = self.frame.shape[:2]
-            warped = cv2.warpPerspective(
-                GRID_600, H_tpl, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
-            )
-            wpm = cvimg_to_qpix(warped)
-            p.setOpacity(self.alpha)
-            self._paint_pixmap(p, wpm)
-            p.setOpacity(1.0)
+            p.save()
+            try:
+                h, w = self.frame.shape[:2]
+                warped = cv2.warpPerspective(
+                    GRID_600, H_tpl, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_TRANSPARENT
+                )
+                wpm = cvimg_to_qpix(warped)
+                p.setOpacity(self.alpha)
+                self._paint_pixmap(p, wpm)
+                p.setOpacity(1.0)
 
-            # rotes Wedge via Homographie
-            if self._wedge_tmpl is not None:
-                try:
-                    pts_img = cv2.perspectiveTransform(self._wedge_tmpl, H_tpl).reshape(-1, 2)
-                    fw, fh = self.frame.shape[1], self.frame.shape[0]
-                    path = QtGui.QPainterPath()
-                    first = True
-                    for x_img, y_img in pts_img:
-                        x = ox + (x_img / fw) * (ps.width() * scale)
-                        y = oy + (y_img / fh) * (ps.height() * scale)
-                        if first:
-                            path.moveTo(float(x), float(y)); first = False
-                        else:
-                            path.lineTo(float(x), float(y))
-                    path.closeSubpath()
-                    p.setPen(QtGui.QPen(QtGui.QColor(255, 64, 64, 220), 1))
-                    p.setBrush(QtGui.QColor(255, 64, 64, 90))
-                    p.drawPath(path)
-                except Exception:
-                    pass
+                # rotes Wedge via Homographie
+                if self._wedge_tmpl is not None:
+                    try:
+                        pts_img = cv2.perspectiveTransform(self._wedge_tmpl, H_tpl).reshape(-1, 2)
+                        fw, fh = self.frame.shape[1], self.frame.shape[0]
+                        path = QtGui.QPainterPath()
+                        first = True
+                        for x_img, y_img in pts_img:
+                            x = ox + (x_img / fw) * (ps.width() * scale)
+                            y = oy + (y_img / fh) * (ps.height() * scale)
+                            if first:
+                                path.moveTo(float(x), float(y)); first = False
+                            else:
+                                path.lineTo(float(x), float(y))
+                        path.closeSubpath()
+                        p.setPen(QtGui.QPen(QtGui.QColor(255, 64, 64, 220), 1))
+                        p.setBrush(QtGui.QColor(255, 64, 64, 90))
+                        p.drawPath(path)
+                    except Exception:
+                        pass
+            finally:
+                p.restore()
 
-        # 4 grüne Punkte
-        p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
-        p.setBrush(QtGui.QColor(34, 197, 94, 180))
+        # Marker: hohler Kreis + Crosshair, aktiver Punkt amber
         fw, fh = self.frame.shape[1], self.frame.shape[0]
         labels = ["20-1", "6-10", "3-19", "11-14"]
         for idx, (x_img, y_img) in enumerate(self.points):
+            # Bild→Widget
             x = ox + (x_img / fw) * (ps.width() * scale)
             y = oy + (y_img / fh) * (ps.height() * scale)
-            p.drawEllipse(QtCore.QPointF(float(x), float(y)), 6, 6)
-            p.setPen(QtGui.QPen(QtGui.QColor("#e5e7eb")))
-            p.drawText(QtCore.QPointF(float(x) + 8.0, float(y) - 8.0), labels[idx])
-            p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
-        # ... Punkte gezeichnet ...
-        self._draw_magnifier(p, ox, oy, scale, ps)
 
+            # Stift: aktiver Punkt amber, sonst grün
+            pen_color = self.color_active if idx == self._active_idx else self.color_point
+            pen = QtGui.QPen(pen_color, self.pt_thickness)
+            pen.setCosmetic(True)  # Dicke bleibt unabhängig vom Zoom
+            p.setPen(pen)
+            p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+
+            # Hohler Kreis
+            p.drawEllipse(QtCore.QPointF(float(x), float(y)), self.pt_radius, self.pt_radius)
+
+            # Crosshair
+            L = self.cross_len
+            p.drawLine(QtCore.QPointF(float(x - L), float(y)), QtCore.QPointF(float(x + L), float(y)))
+            p.drawLine(QtCore.QPointF(float(x), float(y - L)), QtCore.QPointF(float(x), float(y + L)))
+
+            # Label
+            p.setPen(QtGui.QPen(self.color_label))
+            p.drawText(QtCore.QPointF(float(x) + 10.0, float(y) - 10.0), labels[idx])
+
+        # Lupe immer zuletzt (on top)
+        self._draw_magnifier(p, ox, oy, scale, ps)
 
     # ----- Maus/Tastatur -----
     def _img_coords_from_mouse(self, e: QtGui.QMouseEvent):
@@ -677,7 +713,7 @@ class DragBoard(QtWidgets.QLabel):
         return x_img, y_img
 
     def mousePressEvent(self, e: QtGui.QMouseEvent):
-        if self.frame is None:
+        if self.frame is None or not self.frame.size:
             return
         xi, yi = self._img_coords_from_mouse(e)
         d = np.linalg.norm(self.points - np.array([xi, yi]), axis=1)
@@ -689,10 +725,16 @@ class DragBoard(QtWidgets.QLabel):
         self.update()
 
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
-        if self.frame is None or self._drag_idx < 0:
+        if self.frame is None or not self.frame.size:
             return
+        # Lupe aktiv halten, solange linke Maustaste gedrückt ist
+        if e.buttons() & QtCore.Qt.MouseButton.LeftButton:
+            self._mag_active = True
         xi, yi = self._img_coords_from_mouse(e)
         self._mag_last_img = (xi, yi)
+        if self._drag_idx < 0:
+            self.update()
+            return
         self.points[self._drag_idx] = [xi, yi]
         self.pointsChanged.emit()
         self._h_dirty = True
@@ -727,6 +769,7 @@ class DragBoard(QtWidgets.QLabel):
         self.set_snapshot_from_current_frame()
         self.recompute_homography(refine=True)
         self.update()
+
 
 
 # ===================
@@ -1145,3 +1188,9 @@ class TripleCalibration(QtWidgets.QDialog):
 def open_triple_calibration(parent=None):
     dlg = TripleCalibration(parent)
     dlg.exec()
+
+
+
+
+
+
