@@ -420,6 +420,13 @@ class DragBoard(QtWidgets.QLabel):
         self._drag_idx = -1
         self._active_idx = 0
 
+        # --- Magnifier (Lupe) ---
+        self._mag_active = False
+        self._mag_last_img = (0.0, 0.0)  # (x_img, y_img)
+        self._mag_size = 160             # Durchmesser der Lupe (px, on-screen)
+        self._mag_zoom = 3.0             # Vergrößerungsfaktor
+        self._mag_crosshair = True
+
         # Snapshot & Dirty-Flag
         self._snapshot_gray: Optional[np.ndarray] = None
         self._h_dirty = True  # True → H neu berechnen
@@ -510,6 +517,85 @@ class DragBoard(QtWidgets.QLabel):
         ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
         p.drawPixmap(QtCore.QRectF(ox, oy, dw, dh), pm, QtCore.QRectF(0, 0, ps.width(), ps.height()))
         return scale, ox, oy, ps
+    
+    # >>> HIER EINFÜGEN: Helper Bild->Widget-Koordinaten <<<
+    def _img_to_widget(self, x_img: float, y_img: float, ox: float, oy: float,
+                       scale: float, ps: QtCore.QSize) -> tuple[float, float]:
+        """Mapt Bildkoordinate (Pixel im Kameraframe) in Widgetkoordinate."""
+        fw, fh = self.frame.shape[1], self.frame.shape[0]
+        x = ox + (x_img / fw) * (ps.width() * scale)
+        y = oy + (y_img / fh) * (ps.height() * scale)
+        return float(x), float(y)
+    
+    def _draw_magnifier(self, p: QtGui.QPainter, ox: float, oy: float,
+                        scale: float, ps: QtCore.QSize):
+        if not self._mag_active or self.frame is None:
+            return
+
+        xi, yi = self._mag_last_img
+        dst_d = int(self._mag_size)               # Durchmesser on-screen
+        zoom   = float(self._mag_zoom)
+        src_d  = max(12, int(round(dst_d / zoom)))  # Kantenlänge der Quelle (quadratisch)
+        h, w = self.frame.shape[:2]
+
+        # Quell-ROI zentriert um (xi,yi), an Bildränder geclamped
+        x0 = int(round(xi)) - src_d // 2
+        y0 = int(round(yi)) - src_d // 2
+        x0 = max(0, min(w - src_d, x0))
+        y0 = max(0, min(h - src_d, y0))
+        roi = self.frame[y0:y0 + src_d, x0:x0 + src_d]
+
+        # Hochskalieren
+        patch = cv2.resize(roi, (dst_d, dst_d), interpolation=cv2.INTER_NEAREST)
+        pm = cvimg_to_qpix(patch)
+
+        # Position der Lupe: neben dem Cursor (Widget-Koord)
+        cx, cy = self._img_to_widget(xi, yi, ox, oy, scale, ps)
+        # versetzen (unten rechts), und in Widget-Grenzen clampen
+        pad = 14
+        x_draw = cx + pad
+        y_draw = cy + pad
+        rect = self.rect()
+        if x_draw + dst_d + pad > rect.right():
+            x_draw = cx - pad - dst_d
+        if y_draw + dst_d + pad > rect.bottom():
+            y_draw = cy - pad - dst_d
+
+        # runde Maske + leichte Umrandung
+        path = QtGui.QPainterPath()
+        path.addEllipse(QtCore.QRectF(x_draw, y_draw, dst_d, dst_d))
+
+        # Drop-Shadow
+        p.save()
+        p.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        shadow = QtGui.QColor(0, 0, 0, 120)
+        p.fillPath(path.translated(2, 2), shadow)
+
+        # Clipping und Patch malen
+        p.setClipPath(path)
+        p.drawPixmap(QtCore.QRectF(x_draw, y_draw, dst_d, dst_d), pm,
+                    QtCore.QRectF(0, 0, pm.width(), pm.height()))
+        p.setClipping(False)
+
+        # Rand
+        p.setPen(QtGui.QPen(QtGui.QColor("#10b981"), 2))  # teal/grün
+        p.drawPath(path)
+
+        # Crosshair
+        if self._mag_crosshair:
+            p.setPen(QtGui.QPen(QtGui.QColor(255, 255, 255, 230), 1))
+            cx2 = x_draw + dst_d * 0.5
+            cy2 = y_draw + dst_d * 0.5
+            # horizontale/vertikale Linien (kurz)
+            L = dst_d * 0.45
+            p.drawLine(QtCore.QPointF(cx2 - L, cy2), QtCore.QPointF(cx2 + L, cy2))
+            p.drawLine(QtCore.QPointF(cx2, cy2 - L), QtCore.QPointF(cx2, cy2 + L))
+            # kleine Mitte
+            p.setBrush(QtGui.QColor(255, 255, 255, 220))
+            p.drawEllipse(QtCore.QPointF(cx2, cy2), 2, 2)
+
+        p.restore()
+
 
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
@@ -570,6 +656,9 @@ class DragBoard(QtWidgets.QLabel):
             p.setPen(QtGui.QPen(QtGui.QColor("#e5e7eb")))
             p.drawText(QtCore.QPointF(float(x) + 8.0, float(y) - 8.0), labels[idx])
             p.setPen(QtGui.QPen(QtGui.QColor("#22c55e"), 3))
+        # ... Punkte gezeichnet ...
+        self._draw_magnifier(p, ox, oy, scale, ps)
+
 
     # ----- Maus/Tastatur -----
     def _img_coords_from_mouse(self, e: QtGui.QMouseEvent):
@@ -595,11 +684,15 @@ class DragBoard(QtWidgets.QLabel):
         self._drag_idx = int(np.argmin(d)) if d.size else -1
         if self._drag_idx >= 0:
             self._active_idx = self._drag_idx
+        self._mag_active = (self._drag_idx >= 0)
+        self._mag_last_img = (xi, yi)
+        self.update()
 
     def mouseMoveEvent(self, e: QtGui.QMouseEvent):
         if self.frame is None or self._drag_idx < 0:
             return
         xi, yi = self._img_coords_from_mouse(e)
+        self._mag_last_img = (xi, yi)
         self.points[self._drag_idx] = [xi, yi]
         self.pointsChanged.emit()
         self._h_dirty = True
@@ -607,6 +700,7 @@ class DragBoard(QtWidgets.QLabel):
 
     def mouseReleaseEvent(self, _e: QtGui.QMouseEvent):
         self._drag_idx = -1
+        self._mag_active = False
         # Snapshot + einmalige, stabile H-Berechnung
         self.set_snapshot_from_current_frame()
         self.recompute_homography(refine=True)
