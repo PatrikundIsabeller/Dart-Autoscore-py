@@ -223,31 +223,61 @@ def save_calibration(payload: dict) -> None:
 # 3) Overlay (Template 600px)
 # ===========================
 
-def make_grid600_image(include_numbers=True) -> np.ndarray:
+# ===========================
+# 3) Overlay (Template 600px)
+# ===========================
+
+def make_grid600_image_colored(include_numbers=True) -> np.ndarray:
     """
-    Erzeugt 600×600 Overlay (BGR):
-      - Ringe (autodarts-Radien)
-      - 20 Sektor-Grenzen (k*18°)
-      - Zahlen in **Segmentmitte** (+9°), leicht außerhalb Double-Outer
+    600×600 farbiges Kalibrierungs-Overlay (BGR):
+      – Board-Füllfarbe bis Double-Outer
+      – Triple-/Double-Bänder eingefärbt
+      – weiße Ringe + 20 Sektorgrenzen
+      – Zahlen in Segmentmitte (+9°)
     """
     img = np.zeros((600, 600, 3), dtype=np.uint8)
     cx = cy = 300
     R = 300.0
 
-    teal = (0, 255, 255)
+    # ---- Farben (BGR!) ----
+    col_board  = (176, 110, 32)   # Grundfläche (blau-ish nach Alpha-Blending)
+    col_triple = (200, 140, 50)   # Triple-Band
+    col_double = (220, 170, 70)   # Double-Band
+    col_line   = (255, 255, 255)  # Linien
+    col_bull_o = (210, 210, 255)  # Outer Bull Füllung
+    col_bull_i = (64,  64,  255)  # Inner Bull Füllung (kräftig)
 
-    def circ(rel, color, thickness=2):
-        cv2.circle(img, (cx, cy), int(rel * R), color, thickness, cv2.LINE_AA)
+    # Board-Füllung (bis Double-Outer)
+    r_do = int(REL["double_outer"] * R)
+    cv2.circle(img, (cx, cy), r_do, col_board, thickness=-1, lineType=cv2.LINE_AA)
 
-    # Ringe
-    circ(REL["double_outer"], teal, 2)
-    circ(REL["double_inner"], teal, 1)
-    circ(REL["triple_outer"], teal, 2)
-    circ(REL["triple_inner"], teal, 1)
-    circ(REL["bull_outer"], (255, 255, 0), 1)
-    circ(REL["bull_inner"], (255, 0, 0), -1)
+    # Triple-/Double-Band als dicke Kreise füllen
+    r_to  = int(REL["triple_outer"] * R)
+    r_ti  = int(REL["triple_inner"] * R)
+    r_di  = int(REL["double_inner"] * R)
+    t_trp = max(1, r_to - r_ti)
+    t_dbl = max(1, r_do - r_di)
+    cv2.circle(img, (cx, cy), r_to, col_triple, thickness=t_trp, lineType=cv2.LINE_AA)
+    cv2.circle(img, (cx, cy), r_do, col_double, thickness=t_dbl, lineType=cv2.LINE_AA)
 
-    # Sektorgrenzen
+    # Bulls
+    r_bo = int(REL["bull_outer"] * R)
+    r_bi = int(REL["bull_inner"] * R)
+    cv2.circle(img, (cx, cy), r_bo, col_bull_o, thickness=-1, lineType=cv2.LINE_AA)
+    cv2.circle(img, (cx, cy), r_bi, col_bull_i, thickness=-1, lineType=cv2.LINE_AA)
+
+    # Ringgrenzen (weiß)
+    def ring(rel, thick=2):
+        cv2.circle(img, (cx, cy), int(rel * R), col_line, thick, cv2.LINE_AA)
+
+    ring(REL["double_outer"], 2)
+    ring(REL["double_inner"], 2)
+    ring(REL["triple_outer"], 2)
+    ring(REL["triple_inner"], 2)
+    ring(REL["bull_outer"], 2)
+    ring(REL["bull_inner"], 2)
+
+    # 20 Sektorgrenzen (weiß)
     for k in range(20):
         ang_deg = -90 + k * 18
         t = np.deg2rad(ang_deg)
@@ -255,12 +285,11 @@ def make_grid600_image(include_numbers=True) -> np.ndarray:
         r1 = REL["double_outer"] * R
         x0, y0 = int(cx + r0 * np.cos(t)), int(cy + r0 * np.sin(t))
         x1, y1 = int(cx + r1 * np.cos(t)), int(cy + r1 * np.sin(t))
-        cv2.line(img, (x0, y0), (x1, y1), teal, 1, cv2.LINE_AA)
+        cv2.line(img, (x0, y0), (x1, y1), col_line, 2, cv2.LINE_AA)
 
-    # Zahlen mittig im Segment (+9°)
+    # Zahlen mittig im Segment (+9°), leicht außerhalb Double-Outer
     if include_numbers:
-        rel_number = REL["double_outer"] * 1.06  # leicht außerhalb
-        r_txt = rel_number * R
+        r_txt = (REL["double_outer"] * 1.06) * R
         font = cv2.FONT_HERSHEY_SIMPLEX
         for k, num in enumerate(SECTOR_ORDER):
             ang_deg = -90 + (k * 18 + 9)
@@ -272,11 +301,14 @@ def make_grid600_image(include_numbers=True) -> np.ndarray:
             thick = 2
             (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
             org = (int(x - tw / 2), int(y + th / 2))
+            # Outline + Weiß
             cv2.putText(img, text, org, font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
             cv2.putText(img, text, org, font, scale, (255, 255, 255), thick, cv2.LINE_AA)
     return img
 
-GRID_600 = make_grid600_image(True)
+# Neues Template erzeugen
+GRID_600 = make_grid600_image_colored(True)
+
 
 
 # ==================
