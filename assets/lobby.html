@@ -338,9 +338,14 @@
     el.select(); el.setSelectionRange(0, 99999); document.execCommand('copy');
   });
   document.getElementById('startGame').addEventListener('click', ()=>{
-    const data = { payload, players };
-    alert('Start game (stub)\n\n' + JSON.stringify(data, null, 2));
-  });
+    const data = {
+        gameType: payload.gameType || 'X01',
+        settings: payload.settings || {},   // kommt aus Setup, bereits 1:1 übernommen
+        players: players.map(p => ({ name: p.name })) // nur Name reicht hier
+    };
+    sessionStorage.setItem('game_payload', JSON.stringify(data));
+    window.location.href = 'x01_game.html';
+    });
 
   // --- Init: Details + Host als erster Spieler + Datalist füllen --------
   (function init(){

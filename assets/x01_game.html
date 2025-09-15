@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TripleOne – X01 Match</title>
+<style>
+  :root{
+    --bg-a:#0c1444; --bg-b:#17366e;
+    --text:#eef3ff; --muted:#a9b6d1;
+    --panel:#1b2f60aa; --panel-bd:#2c4b8a;
+    --card:#203a73dd; --card-bd:#31579d; --radius:14px; --radius-lg:16px;
+    --shadow:0 14px 40px rgba(0,0,0,.35);
+    --sidebar-w:240px; --gap:24px; --container-max:1560px;
+    --good:#2aa66a; --good2:#1f8c58;
+  }
+  *{box-sizing:border-box} html,body{height:100%}
+  body{
+    margin:0; color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial;
+    background:radial-gradient(1100px 700px at 25% 0%, #233f87 0%, transparent 60%),
+               linear-gradient(180deg, var(--bg-a), var(--bg-b));
+  }
+  .app{display:grid; gap:var(--gap); padding:var(--gap);
+       grid-template-columns: var(--sidebar-w) 1fr; min-height:100vh;}
+  @media (max-width: 680px){ .app{grid-template-columns:1fr} .sidebar{position:relative} }
+  .sidebar{
+    position:sticky; top:24px; align-self:start; height:fit-content;
+    background:var(--panel); border:1px solid var(--panel-bd);
+    border-radius:var(--radius-lg); padding:16px; backdrop-filter: blur(6px);
+  }
+  .brand{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+  .brand .logo{width:28px;height:28px;border-radius:8px;background:conic-gradient(from 0deg,#6ea8ff,#79e2ff);box-shadow:var(--shadow)}
+  .brand h1{font-size:16px;margin:0;letter-spacing:.6px;font-weight:700}
+  .nav{display:flex;flex-direction:column;gap:6px}
+  .nav a{display:flex;align-items:center;gap:12px;padding:10px 12px;text-decoration:none;color:var(--text);border:1px solid #2a4a8a;background:#132c64a6;border-radius:12px}
+  .nav a:hover{background:#1b376eb8}
+  .nav a.active{background:#244079;border-color:#3a5fb2}
+
+  .mainwrap{display:flex;justify-content:center}
+  .main{width:100%; max-width:var(--container-max)}
+  .toolbar{display:flex; gap:8px; flex-wrap:wrap; padding:2px 0 6px 2px}
+  .pill{font-size:12px; padding:6px 8px; border:1px solid #3a5fb2; border-radius:12px; background:#18356e; color:#dbe7ff}
+
+  /* score cards row – bis zu 6 nebeneinander */
+  .row{
+    display:grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap:14px; align-items:start
+  }
+  .score{
+    background:var(--card); border:2px solid var(--card-bd); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow); padding:10px 12px; transition:border-color .15s, box-shadow .15s;
+  }
+  .score.active{ border-color:#ffffffaa; box-shadow:inset 0 0 0 3px rgba(255,255,255,.55), var(--shadow) }
+  .score .big{ font-size:clamp(36px, 8vw, 92px); line-height:1.1; font-weight:800; margin:4px 6px 6px }
+  .meta{display:flex; align-items:center; gap:8px; padding:6px 8px}
+  .tag{display:inline-flex; align-items:center; gap:6px; background:#132c64a6; border:1px solid #2a4a8a; padding:4px 8px; border-radius:999px}
+  .tag .dot{width:8px; height:8px; border-radius:50%; background:#ffd166}
+
+  /* lanes: SUM + 3 dart slots */
+  .lanes{
+    display:grid; grid-template-columns: 240px 1fr 1fr 1fr; gap:14px; margin:10px 0 16px
+  }
+  @media (max-width: 960px){ .lanes{ grid-template-columns: 1fr; } }
+  .sumBox{
+    background:var(--panel); border:1px solid var(--panel-bd); border-radius:12px;
+    height:56px; display:grid; place-items:center; color:#fff; font-weight:700; font-size:36px;
+  }
+  .lane{
+  position:relative;
+  background:var(--panel); border:1px solid var(--panel-bd);
+  border-radius:12px; height:56px; display:grid; place-items:center;
+}
+
+.dart-icon{
+  width:var(--dart-w); height:var(--dart-h); opacity:.75;
+  background-color: var(--dart-color);
+  -webkit-mask: url("icons/dart.svg") center / contain no-repeat;
+          mask: url("icons/dart.svg") center / contain no-repeat;
+}
+
+.dart-label{
+  position:absolute; inset:0; display:grid; place-items:center;
+  font-size:26px; font-weight:700; color:#eaf2ff; letter-spacing:.5px;
+}
+  /* hübsches Dart-Icon (inline SVG) */
+  .lane svg{ width:120px; height:22px; opacity:.65 }
+  .dart-label{
+    position:absolute; inset:0; display:grid; place-items:center;
+    font-size:26px; font-weight:700; color:#eaf2ff; letter-spacing:.5px;
+  }
+
+  /* pad */
+  .pad{
+    background:var(--card); border:1px solid var(--card-bd); border-radius:var(--radius-lg);
+    box-shadow:var(--shadow); padding:10px; max-width:720px; margin:0 auto;
+  }
+  .pad .head{display:grid; grid-template-columns: 1fr repeat(5, 1fr); gap:8px; padding:4px}
+  .pad .grid{display:grid; grid-template-columns: 1fr repeat(5, 1fr); gap:8px; padding:4px}
+  .cell{
+    border:1px solid #2d4f94; background:#163066; color:#e7eeff; border-radius:12px;
+    height:60px; display:grid; place-items:center; cursor:pointer; user-select:none;
+  }
+  .cell.label{background:transparent; border-color:transparent; color:#c7d3f1; cursor:default}
+  .cell.small{height:40px}
+  .cell.head{background:#163a78; font-weight:700}
+  .cell.active{outline:2px solid #6ea8ff}
+  .pad .actions{display:flex; justify-content:space-between; gap:10px; margin-top:8px}
+  .btn{appearance:none; border:1px solid #3a5fb2; background:#1a356b; color:#fff; border-radius:12px; padding:12px 16px; cursor:pointer; min-width:140px}
+  .btn:hover{background:#21417c}
+  .btn.primary{background:linear-gradient(180deg, var(--good), var(--good2)); border:none}
+  .btn.primary:hover{filter:brightness(1.05)}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="brand"><div class="logo"></div><h1>AUTODARTS</h1></div>
+    <nav class="nav">
+      <a href="play_dashboard.html">Play</a>
+      <a class="active" href="#">Matches</a>
+    </nav>
+  </aside>
+
+  <!-- Main -->
+  <div class="mainwrap">
+    <main class="main">
+      <!-- toolbar pills -->
+      <div class="toolbar" id="toolbar"></div>
+
+      <!-- score row -->
+      <div class="row" id="scoreRow"><!-- filled by JS --></div>
+
+      <!-- lanes: SUM + 3 dart slots -->
+      <div class="lanes">
+        <div class="sumBox" id="sumBox">0</div>
+
+        <div class="lane" id="lane0">
+            <div class="dart-icon" aria-hidden="true"></div>
+            <div class="dart-label"></div>
+        </div>
+        <div class="lane" id="lane1">
+            <div class="dart-icon" aria-hidden="true"></div>
+            <div class="dart-label"></div>
+        </div>
+        <div class="lane" id="lane2">
+            <div class="dart-icon" aria-hidden="true"></div>
+            <div class="dart-label"></div>
+        </div>
+
+
+      <!-- input pad -->
+      <section class="pad">
+        <div class="head">
+          <div class="cell label"></div>
+          <div class="cell head" id="hSingle">Single</div>
+          <div class="cell head" id="hDouble">Double</div>
+          <div class="cell head" id="hTriple">Triple</div>
+          <div class="cell label"></div>
+          <div class="cell label"></div>
+        </div>
+
+        <div class="grid" id="padGrid">
+          <!-- Zeile: Miss -->
+          <div class="cell label">Miss</div>
+          <div class="cell small" data-v="0">0</div>
+          <div class="cell small" data-v="0">0</div>
+          <div class="cell small" data-v="0">0</div>
+          <div class="cell label"></div>
+          <div class="cell label"></div>
+
+          <!-- 20..16 -->
+          <div class="cell label">S20–S16</div>
+          <div class="cell" data-n="20">S20</div>
+          <div class="cell" data-n="19">S19</div>
+          <div class="cell" data-n="18">S18</div>
+          <div class="cell" data-n="17">S17</div>
+          <div class="cell" data-n="16">S16</div>
+
+          <!-- 15..11 -->
+          <div class="cell label">S15–S11</div>
+          <div class="cell" data-n="15">S15</div>
+          <div class="cell" data-n="14">S14</div>
+          <div class="cell" data-n="13">S13</div>
+          <div class="cell" data-n="12">S12</div>
+          <div class="cell" data-n="11">S11</div>
+
+          <!-- 10..6 -->
+          <div class="cell label">S10–S6</div>
+          <div class="cell" data-n="10">S10</div>
+          <div class="cell" data-n="9">S9</div>
+          <div class="cell" data-n="8">S8</div>
+          <div class="cell" data-n="7">S7</div>
+          <div class="cell" data-n="6">S6</div>
+
+          <!-- 5..1 -->
+          <div class="cell label">S5–S1</div>
+          <div class="cell" data-n="5">S5</div>
+          <div class="cell" data-n="4">S4</div>
+          <div class="cell" data-n="3">S3</div>
+          <div class="cell" data-n="2">S2</div>
+          <div class="cell" data-n="1">S1</div>
+        </div>
+
+        <div class="actions">
+          <button class="btn" id="btnUndo">↩︎ Undo</button>
+          <button class="btn primary" id="btnNext">Next</button>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<script>
+  // ----- Payload laden -----
+  const game = (() => {
+    try{
+      const gp = sessionStorage.getItem('game_payload');
+      if(gp) return JSON.parse(gp);
+    }catch{}
+    return { gameType:'X01', settings:{base:'501', inMode:'Straight', outMode:'Double', maxRounds:'50'}, players:[{name:'PICUS'},{name:'PATRICK'}] };
+  })();
+
+  // Settings normalisieren
+  const BASE = parseInt(String(game.settings.base||'501'), 10) || 501;
+  const MAXR = parseInt(String(game.settings.maxRounds||'50'), 10) || 50;
+
+  // ----- Toolbar-Pills rendern -----
+  function modePill(inM, outM){
+    const map = {Straight:'S', Double:'D', Master:'M'};
+    return `${map[inM]||'S'}I-${map[outM]||'S'}O`;
+  }
+  function addPill(text){ const s = document.createElement('span'); s.className='pill'; s.textContent=text; document.getElementById('toolbar').appendChild(s); }
+  addPill('X01'); addPill(String(BASE));
+  addPill(modePill(game.settings.inMode, game.settings.outMode));
+  if(game.settings.matchMode === 'sets'){ addPill('S'+(game.settings.setsToWin||2)); }
+  else if(game.settings.matchMode === 'legs'){ addPill('L'+(game.settings.legsToWin||2)); }
+  addPill('R1/'+MAXR);
+
+  // ----- Spieler/Scorecards -----
+  const state = {
+    players: game.players.map(p => ({ name: p.name, score: BASE })),
+    curPlayer: 0,
+    darts: [],   // aktuelle Aufnahme (max 3), Elemente: {ring,n,label,value}
+    history: []  // {player, ring,n,label,value}
+  };
+
+  function scoreCard(p, i){
+    return `
+      <section class="score ${i===state.curPlayer?'active':''}" data-idx="${i}">
+        <div class="big" id="sc${i}">${p.score}</div>
+        <div class="meta">
+          <span class="tag"><span class="dot"></span> <b>${p.name}</b></span>
+        </div>
+      </section>
+    `;
+  }
+  function renderScores(){
+    const row = document.getElementById('scoreRow');
+    row.innerHTML = state.players.map(scoreCard).join('');
+  }
+  renderScores();
+
+  // ----- Lanes & Summe -----
+  const sumBox = document.getElementById('sumBox');
+  const laneBoxes = [...document.querySelectorAll('.lane')]; // 3 Container
+
+  function refreshLanes(){
+    laneBoxes.forEach((box, i) => {
+      const icon = box.querySelector('svg');
+      const lbl  = box.querySelector('.dart-label');
+      const d = state.darts[i];
+
+      if(d){ // Wurf vorhanden -> Label zeigen, Icon ausblenden
+        lbl.textContent = d.label;
+        lbl.style.opacity = 1;
+        icon.style.opacity = 0;
+      }else{ // leer -> Icon sichtbar, Label leer
+        lbl.textContent = '';
+        lbl.style.opacity = 0;
+        icon.style.opacity = .65;
+      }
+    });
+
+    // Summe aktualisieren
+    const s = state.darts.reduce((a,t)=>a + (t?.value||0), 0);
+    sumBox.textContent = String(s);
+  }
+  refreshLanes();
+
+  // ----- Eingabepad: Ring-Modus (Single/Double/Triple) -----
+  let ring = 'S';
+  const hSingle = document.getElementById('hSingle');
+  const hDouble = document.getElementById('hDouble');
+  const hTriple = document.getElementById('hTriple');
+  function markHead(){
+    [hSingle,hDouble,hTriple].forEach(h=>h.classList.remove('active'));
+    ({'S':hSingle,'D':hDouble,'T':hTriple}[ring]).classList.add('active');
+  }
+  markHead();
+  hSingle.onclick = ()=>{ ring='S'; markHead(); };
+  hDouble.onclick = ()=>{ ring='D'; markHead(); };
+  hTriple.onclick = ()=>{ ring='T'; markHead(); };
+
+  // ----- Klicks auf Zellen -----
+  document.getElementById('padGrid').addEventListener('click', (e)=>{
+    const cell = e.target.closest('.cell');
+    if(!cell) return;
+
+    if(state.darts.length >= 3) return; // max 3 pro Aufnahme
+
+    // Miss?
+    if(cell.dataset.v){
+      addThrow({ ring:'M', n:0, value:0, label:'0' });
+      return;
+    }
+
+    // Nummer + Ring
+    if(cell.dataset.n){
+      const n = parseInt(cell.dataset.n,10);
+      const mult = ring === 'D' ? 2 : ring === 'T' ? 3 : 1;
+      addThrow({ ring, n, value: mult * n, label: `${ring}${n}` });
+    }
+  });
+
+  function addThrow(obj){
+    state.darts.push(obj);
+    state.history.push({player: state.curPlayer, ...obj});
+    // Score berechnen
+    const p = state.players[state.curPlayer];
+    p.score = Math.max(0, p.score - obj.value);
+    renderScores(); refreshLanes();
+  }
+
+  function undo(){
+    const last = state.history.pop();
+    if(!last) return;
+
+    if(last.player !== state.curPlayer){
+      state.curPlayer = last.player;
+      state.darts = []; // neue Aufnahme starten
+    }else{
+      state.darts.pop();
+    }
+    state.players[last.player].score += last.value;
+    renderScores(); refreshLanes();
+  }
+
+  function nextPlayer(){
+    state.curPlayer = (state.curPlayer + 1) % state.players.length;
+    state.darts = [];            // neue Aufnahme -> Anzeige leeren & Icons zurück
+    renderScores(); refreshLanes();
+  }
+
+  document.getElementById('btnUndo').onclick = undo;
+  document.getElementById('btnNext').onclick = nextPlayer;
+</script>
+</body>
+</html>
