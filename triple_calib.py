@@ -73,7 +73,11 @@ def refine_points_on_double_outer(
     h, w = gray.shape[:2]
 
     pts = pts_img.astype(np.float32).copy()
-    c = np.array(center, dtype=np.float32) if center is not None else np.mean(pts, axis=0)
+    c = (
+        np.array(center, dtype=np.float32)
+        if center is not None
+        else np.mean(pts, axis=0)
+    )
     idxs = range(4) if only_idx is None else [int(only_idx)]
 
     for i in idxs:
@@ -92,25 +96,28 @@ def refine_points_on_double_outer(
     return pts
 
 
-
 def compute_H_world2img(points_img_xy: np.ndarray) -> np.ndarray:
     """
     Welt→Bild Homographie aus den 4 Bildpunkten (oben/rechts/unten/links) auf dem Double-Outer.
     """
     assert points_img_xy.shape == (4, 2)
     pts_world = world_points_autodarts_mm()
-    H, _ = cv2.findHomography(pts_world, points_img_xy, method=0)  # 4 exakt → kein RANSAC
+    H, _ = cv2.findHomography(
+        pts_world, points_img_xy, method=0
+    )  # 4 exakt → kein RANSAC
     if H is None:
         raise ValueError("Homography (Welt→Bild) fehlgeschlagen")
     return H
 
 
-def M_tplPx_to_world_mm(R_tpl_px: float = 300.0, R_board_mm: float = R_BOARD_MM) -> np.ndarray:
+def M_tplPx_to_world_mm(
+    R_tpl_px: float = 300.0, R_board_mm: float = R_BOARD_MM
+) -> np.ndarray:
     """
     Projektivmatrix: Template-Pixel (600×600, Mittelpunkt (300,300)) → Welt (mm, Mittelpunkt (0,0)).
     """
     s = R_board_mm / R_tpl_px  # mm/px (Template→mm)
-    t = -s * R_tpl_px          # verschiebt (300,300) → (0,0)
+    t = -s * R_tpl_px  # verschiebt (300,300) → (0,0)
     return np.array([[s, 0, t], [0, s, t], [0, 0, 1]], dtype=np.float64)
 
 
@@ -138,6 +145,7 @@ def compute_homographies_from_points(gray: np.ndarray, pts_img_xy: np.ndarray):
 # 1b) warpPolar-basierter Rotations-Estimator
 # ===========================================
 
+
 def _wrap_deg(x: float) -> float:
     # -> [-180, 180)
     while x >= 180.0:
@@ -146,10 +154,12 @@ def _wrap_deg(x: float) -> float:
         x += 360.0
     return x
 
+
 def _wrap_mod_deg(x: float, mod: float = 18.0) -> float:
     # wrap in (-mod/2, +mod/2]
     y = (x + mod / 2.0) % mod - mod / 2.0
     return y if y != -mod / 2.0 else mod / 2.0
+
 
 def estimate_rotation_mod18(
     gray: np.ndarray,
@@ -157,7 +167,7 @@ def estimate_rotation_mod18(
     r_equiv_px: float,
     rel_r0: float = REL["triple_inner"],
     rel_r1: float = REL["triple_outer"],
-    ang_res: int = 1440,   # 0.25° Auflösung
+    ang_res: int = 1440,  # 0.25° Auflösung
     rad_res: int = 256,
 ) -> tuple[float, float]:
     """
@@ -172,8 +182,11 @@ def estimate_rotation_mod18(
     maxR = max(32.0, float(r_equiv_px) * (REL["double_outer"] * 1.15))
 
     polar = cv2.warpPolar(
-        gray, (ang_res, rad_res), (float(cx), float(cy)), maxR,
-        flags=cv2.WARP_POLAR_LINEAR + cv2.WARP_FILL_OUTLIERS
+        gray,
+        (ang_res, rad_res),
+        (float(cx), float(cy)),
+        maxR,
+        flags=cv2.WARP_POLAR_LINEAR + cv2.WARP_FILL_OUTLIERS,
     )
     r0_pix = float(r_equiv_px) * rel_r0
     r1_pix = float(r_equiv_px) * rel_r1
@@ -219,6 +232,7 @@ def estimate_rotation_mod18(
 # 2) HTTP I/O (Agent-Persistenz)
 # ===========================
 
+
 def fetch_calibration() -> dict:
     try:
         r = requests.get(AGENT_URL.rstrip("/") + "/calibration", timeout=1.5)
@@ -226,6 +240,7 @@ def fetch_calibration() -> dict:
         return r.json()
     except Exception:
         return {}
+
 
 def save_calibration(payload: dict) -> None:
     r = requests.put(AGENT_URL.rstrip("/") + "/calibration", json=payload, timeout=3.0)
@@ -240,58 +255,49 @@ def save_calibration(payload: dict) -> None:
 # 3) Overlay (Template 600px)
 # ===========================
 
-def make_grid600_image_colored(include_numbers: bool = True, fill: bool = True) -> np.ndarray:
+
+def make_grid600_image_colored(
+    include_numbers: bool = True, fill: bool = False, as_rgba: bool = True
+) -> np.ndarray:
     """
-    600×600 Kalibrierungs-Overlay (BGR).
-    Wenn fill=False: keine Farbflächen, nur Linien (wireframe).
+    600×600 Kalibrierungs-Overlay.
+    - as_rgba=True: transparenter Hintergrund, Linien/Zahlen mit Alpha
+    - fill=False: keine Farbflächen (nur Drahtgitter)
     """
-    img = np.zeros((600, 600, 3), dtype=np.uint8)
+    ch = 4 if as_rgba else 3
+    img = np.zeros((600, 600, ch), dtype=np.uint8)
     cx = cy = 300
     R = 300.0
 
-    # Farben (BGR)
-    col_board  = (176, 110, 32)
-    col_triple = (200, 140, 50)
-    col_double = (220, 170, 70)
-    col_line   = (255, 255, 255)
-    col_bull_o = (210, 210, 255)
-    col_bull_i = (64,  64,  255)
+    # Farben (BGRA/BGR)
+    def C(b, g, r, a=255):
+        return (b, g, r, a) if ch == 4 else (b, g, r)
 
-    # Radien
-    r_do  = int(REL["double_outer"] * R)
-    r_di  = int(REL["double_inner"] * R)
-    r_to  = int(REL["triple_outer"] * R)
-    r_ti  = int(REL["triple_inner"] * R)
-    r_bo  = int(REL["bull_outer"] * R)
-    r_bi  = int(REL["bull_inner"] * R)
+    col_line = C(255, 255, 255, 255)  # Weiß
+    col_number = C(255, 255, 255, 255)
+    col_shadow = C(0, 0, 0, 255)
 
-    if fill:
-        # Flächen/Bänder füllen
-        cv2.circle(img, (cx, cy), r_do, col_board,  thickness=-1, lineType=cv2.LINE_AA)
-        cv2.circle(img, (cx, cy), r_to, col_triple, thickness=max(1, r_to - r_ti), lineType=cv2.LINE_AA)
-        cv2.circle(img, (cx, cy), r_do, col_double, thickness=max(1, r_do - r_di), lineType=cv2.LINE_AA)
-        cv2.circle(img, (cx, cy), r_bo, col_bull_o, thickness=-1, lineType=cv2.LINE_AA)
-        cv2.circle(img, (cx, cy), r_bi, col_bull_i, thickness=-1, lineType=cv2.LINE_AA)
+    # Ringe (nur Linien)
+    for rel, th in [
+        (REL["double_outer"], 2),
+        (REL["double_inner"], 2),
+        (REL["triple_outer"], 2),
+        (REL["triple_inner"], 2),
+        (REL["bull_outer"], 2),
+        (REL["bull_inner"], 2),
+    ]:
+        cv2.circle(img, (cx, cy), int(rel * R), col_line, th, cv2.LINE_AA)
 
-    # Ring-Linien (immer)
-    def ring(rel, thick=2):
-        cv2.circle(img, (cx, cy), int(rel * R), col_line, thick, cv2.LINE_AA)
-
-    ring(REL["double_outer"], 2)
-    ring(REL["double_inner"], 2)
-    ring(REL["triple_outer"], 2)
-    ring(REL["triple_inner"], 2)
-    ring(REL["bull_outer"], 2)
-    ring(REL["bull_inner"], 2)
-
-    # 20 Sektorgrenzen (immer)
+    # 20 Sektorgrenzen
+    r_bo = int(REL["bull_outer"] * R)
+    r_do = int(REL["double_outer"] * R)
     for k in range(20):
-        ang = np.deg2rad(-90 + k * 18)
-        x0, y0 = int(cx + r_bo * np.cos(ang)), int(cy + r_bo * np.sin(ang))
-        x1, y1 = int(cx + r_do * np.cos(ang)), int(cy + r_do * np.sin(ang))
+        t = np.deg2rad(-90 + k * 18)
+        x0, y0 = int(cx + r_bo * np.cos(t)), int(cy + r_bo * np.sin(t))
+        x1, y1 = int(cx + r_do * np.cos(t)), int(cy + r_do * np.sin(t))
         cv2.line(img, (x0, y0), (x1, y1), col_line, 2, cv2.LINE_AA)
 
-    # Zahlen in Segmentmitte (+9°), leicht außerhalb DO (immer)
+    # Zahlen in Segmentmitte (+9°)
     if include_numbers:
         r_txt = int(REL["double_outer"] * R * 1.06)
         font, scale, thick = cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2
@@ -302,17 +308,32 @@ def make_grid600_image_colored(include_numbers: bool = True, fill: bool = True) 
             text = str(num)
             (tw, th), _ = cv2.getTextSize(text, font, scale, thick)
             org = (int(x - tw / 2), int(y + th / 2))
-            cv2.putText(img, text, org, font, scale, (0, 0, 0), thick + 2, cv2.LINE_AA)
-            cv2.putText(img, text, org, font, scale, (255, 255, 255), thick, cv2.LINE_AA)
+            # kleiner Shadow für Lesbarkeit
+            cv2.putText(
+                img,
+                text,
+                (org[0] + 1, org[1] + 1),
+                font,
+                scale,
+                col_shadow,
+                thick + 2,
+                cv2.LINE_AA,
+            )
+            cv2.putText(img, text, org, font, scale, col_number, thick, cv2.LINE_AA)
     return img
 
+
 # >>> beim Testen NUR Linien (keine blaue Füllung):
-GRID_600 = make_grid600_image_colored(include_numbers=True, fill=False)
+GRID_600_RGBA = make_grid600_image_colored(
+    include_numbers=True, fill=False, as_rgba=True
+)
+GRID_600 = GRID_600_RGBA  # Alias, falls alter Name noch irgendwo auftaucht
 
 
 # ==================
 # 4) Camera Utilities
 # ==================
+
 
 def open_capture(cam_id: int, res=(1280, 720), fps: int = 30):
     """
@@ -339,12 +360,13 @@ def open_capture(cam_id: int, res=(1280, 720), fps: int = 30):
     combos = [(w_req, h_req, int(fps)), (1280, 720, 30), (640, 480, 30)]
 
     for be in backends:
-        for (w, h, f) in combos:
+        for w, h, f in combos:
             cap = None
             try:
                 cap = cv2.VideoCapture(cam_id, be)
                 if not cap or not cap.isOpened():
-                    if cap: cap.release()
+                    if cap:
+                        cap.release()
                     continue
 
                 # Viele Cams brauchen MJPG, sonst kein Stream / falsche FPS
@@ -385,7 +407,8 @@ def open_capture(cam_id: int, res=(1280, 720), fps: int = 30):
 
             except Exception:
                 try:
-                    if cap: cap.release()
+                    if cap:
+                        cap.release()
                 except Exception:
                     pass
                 continue
@@ -412,6 +435,24 @@ def cvimg_to_qpix(img: np.ndarray) -> QtGui.QPixmap:
         QtGui.QImage(rgb.data, w, h, ch * w, QtGui.QImage.Format.Format_RGB888)
     )
 
+
+def cvimg_to_qpix_any(img: np.ndarray) -> QtGui.QPixmap:
+    if img is None or img.size == 0:
+        return QtGui.QPixmap()
+    h, w = img.shape[:2]
+    if img.ndim == 2:  # Gray
+        qimg = QtGui.QImage(img.data, w, h, w, QtGui.QImage.Format.Format_Grayscale8)
+    elif img.shape[2] == 3:  # BGR -> RGB
+        rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        qimg = QtGui.QImage(rgb.data, w, h, 3 * w, QtGui.QImage.Format.Format_RGB888)
+    elif img.shape[2] == 4:  # BGRA -> RGBA (Alpha erhalten!)
+        rgba = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
+        qimg = QtGui.QImage(rgba.data, w, h, 4 * w, QtGui.QImage.Format.Format_RGBA8888)
+    else:
+        return QtGui.QPixmap()
+    return QtGui.QPixmap.fromImage(qimg)
+
+
 def undistort_simple(frame: np.ndarray, k1: float, k2: float):
     """Grobe Radial-Entzerrung (k1,k2). Reicht für Webcams meist aus."""
     if frame is None or frame.size == 0:
@@ -424,22 +465,26 @@ def undistort_simple(frame: np.ndarray, k1: float, k2: float):
     newK, _ = cv2.getOptimalNewCameraMatrix(K, D, (w, h), 0)
     return cv2.undistort(frame, K, D, None, newK)
 
-def _auto_canny(gray: np.ndarray, sigma: float = 0.33) -> tuple[int,int]:
+
+def _auto_canny(gray: np.ndarray, sigma: float = 0.33) -> tuple[int, int]:
     v = np.median(gray)
     lo = int(max(0, (1.0 - sigma) * v))
     hi = int(min(255, (1.0 + sigma) * v))
     if lo == hi:
-        lo = max(0, lo - 10); hi = min(255, hi + 10)
+        lo = max(0, lo - 10)
+        hi = min(255, hi + 10)
     return lo, hi
+
 
 def _prep_gray(frame: np.ndarray) -> np.ndarray:
     g = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8,8))
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     g = clahe.apply(g)
-    g = cv2.GaussianBlur(g, (5,5), 1.2)
+    g = cv2.GaussianBlur(g, (5, 5), 1.2)
     return g
 
-def detect_board_circle(gray: np.ndarray) -> Optional[tuple[float,float,float]]:
+
+def detect_board_circle(gray: np.ndarray) -> Optional[tuple[float, float, float]]:
     """
     Liefert (cx, cy, r) wenn möglich. 3 Stufen: Hough ALT → Hough klassisch → Kontur-Fallback.
     """
@@ -449,10 +494,14 @@ def detect_board_circle(gray: np.ndarray) -> Optional[tuple[float,float,float]]:
     # --- Pass 1: HOUGH_GRADIENT_ALT (OpenCV >=4.5), sehr robust ---
     try:
         circles = cv2.HoughCircles(
-            gray, getattr(cv2, "HOUGH_GRADIENT_ALT", cv2.HOUGH_GRADIENT),
-            dp=1.3, minDist=min(H, W) / 3,
-            param1=120, param2=0.8,  # ALT: param2 ist Score [0..1]
-            minRadius=r_min, maxRadius=r_max
+            gray,
+            getattr(cv2, "HOUGH_GRADIENT_ALT", cv2.HOUGH_GRADIENT),
+            dp=1.3,
+            minDist=min(H, W) / 3,
+            param1=120,
+            param2=0.8,  # ALT: param2 ist Score [0..1]
+            minRadius=r_min,
+            maxRadius=r_max,
         )
         if circles is not None and len(circles[0]) > 0:
             c = circles[0][0]
@@ -464,19 +513,26 @@ def detect_board_circle(gray: np.ndarray) -> Optional[tuple[float,float,float]]:
     lo, hi = _auto_canny(gray)
     edges = cv2.Canny(gray, lo, hi)
     circles = cv2.HoughCircles(
-        edges, cv2.HOUGH_GRADIENT, dp=1.2, minDist=min(H, W)/3,
-        param1=120, param2=30, minRadius=r_min, maxRadius=r_max
+        edges,
+        cv2.HOUGH_GRADIENT,
+        dp=1.2,
+        minDist=min(H, W) / 3,
+        param1=120,
+        param2=30,
+        minRadius=r_min,
+        maxRadius=r_max,
     )
     if circles is not None and len(circles[0]) > 0:
         c = max(circles[0], key=lambda v: v[2])
         return float(c[0]), float(c[1]), float(c[2])
 
     # --- Pass 3: Kontur-Fallback ---
-    th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY+cv2.THRESH_OTSU)[1]
+    th = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
     th = cv2.medianBlur(th, 5)
-    th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, np.ones((5,5), np.uint8), iterations=2)
+    th = cv2.morphologyEx(th, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8), iterations=2)
     cnts, _ = cv2.findContours(th, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best = None; best_score = -1.0
+    best = None
+    best_score = -1.0
     for c in cnts:
         if len(c) < 20:
             continue
@@ -484,13 +540,13 @@ def detect_board_circle(gray: np.ndarray) -> Optional[tuple[float,float,float]]:
         peri = cv2.arcLength(c, True)
         if peri <= 1e-3:
             continue
-        roundness = 4*np.pi*area/(peri*peri)  # 1 = Kreis
-        if area < 0.05 * (H*W):  # zu klein
+        roundness = 4 * np.pi * area / (peri * peri)  # 1 = Kreis
+        if area < 0.05 * (H * W):  # zu klein
             continue
         (cx, cy), r = cv2.minEnclosingCircle(c)
         # Score: groß & rund & im erlaubten Radiusfenster
         if r_min <= r <= r_max:
-            score = area * (0.5 + 0.5*roundness)
+            score = area * (0.5 + 0.5 * roundness)
             if score > best_score:
                 best_score, best = (float(cx), float(cy), float(r)), score
     return best
@@ -499,6 +555,7 @@ def detect_board_circle(gray: np.ndarray) -> Optional[tuple[float,float,float]]:
 # =======================
 # 5) DragBoard (Overlay UI)
 # =======================
+
 
 class DragBoard(QtWidgets.QLabel):
     """
@@ -516,28 +573,31 @@ class DragBoard(QtWidgets.QLabel):
             "QLabel{border:1px solid #404040;border-radius:8px;background:#111;color:#fff;}"
         )
         self.setMouseTracking(True)  # Move-Events auch ohne gedrückte Taste
-        self._ref_center: Optional[tuple[float, float]] = None  # fixer Mittelpunkt fürs Refinement
-
+        self._ref_center: Optional[tuple[float, float]] = (
+            None  # fixer Mittelpunkt fürs Refinement
+        )
 
         # ---- State ----
         self.frame: Optional[np.ndarray] = None
         # Startpunkte: grob um das Bild platziert (oben, rechts, unten, links)
-        self.points = np.array([[300, 120], [540, 300], [300, 480], [60, 300]], dtype=np.float32)
+        self.points = np.array(
+            [[300, 120], [540, 300], [300, 480], [60, 300]], dtype=np.float32
+        )
         self._drag_idx = -1
         self._active_idx = 0
 
         # Marker-Style
-        self.pt_radius = 8           # Radius der Markerpunkte (px, im Widget)
-        self.pt_thickness = 2        # Linienstärke
-        self.cross_len = 7           # Länge der Crosshair-Linien (px)
+        self.pt_radius = 8  # Radius der Markerpunkte (px, im Widget)
+        self.pt_thickness = 2  # Linienstärke
+        self.cross_len = 7  # Länge der Crosshair-Linien (px)
         self.color_point = QtGui.QColor("#22c55e")  # grün
-        self.color_active = QtGui.QColor("#f59e0b") # amber für aktiven Punkt
+        self.color_active = QtGui.QColor("#f59e0b")  # amber für aktiven Punkt
         self.color_label = QtGui.QColor("#FF8800")  # Text Orange
         # --- Magnifier (Lupe) ---
         self._mag_active = False
         self._mag_last_img = (0.0, 0.0)  # (x_img, y_img)
-        self._mag_size = 160             # Durchmesser der Lupe (px, on-screen)
-        self._mag_zoom = 3.0             # Vergrößerungsfaktor
+        self._mag_size = 160  # Durchmesser der Lupe (px, on-screen)
+        self._mag_zoom = 3.0  # Vergrößerungsfaktor
         self._mag_crosshair = True
 
         # Snapshot & Dirty-Flag
@@ -548,7 +608,7 @@ class DragBoard(QtWidgets.QLabel):
         self.H_world2img: Optional[np.ndarray] = None  # für Speichern/Agent
         self.H_tplPx2img: Optional[np.ndarray] = None  # fürs Overlay
 
-        # Overlay Darstellung 
+        # Overlay Darstellung
         self.alpha = 0.65
 
         # Wedge im Template
@@ -568,8 +628,14 @@ class DragBoard(QtWidgets.QLabel):
         R = 300.0
         a0 = np.deg2rad(angle_up_deg - spread_deg / 2.0)
         a1 = np.deg2rad(angle_up_deg + spread_deg / 2.0)
-        outer = [(cx + R * r_out * np.cos(t), cy - R * r_out * np.sin(t)) for t in np.linspace(a0, a1, 24)]
-        inner = [(cx + R * r_in  * np.cos(t), cy - R * r_in  * np.sin(t)) for t in np.linspace(a1, a0, 24)]
+        outer = [
+            (cx + R * r_out * np.cos(t), cy - R * r_out * np.sin(t))
+            for t in np.linspace(a0, a1, 24)
+        ]
+        inner = [
+            (cx + R * r_in * np.cos(t), cy - R * r_in * np.sin(t))
+            for t in np.linspace(a1, a0, 24)
+        ]
         self._wedge_tmpl = np.array(outer + inner, dtype=np.float32).reshape(-1, 1, 2)
         self.update()
 
@@ -594,7 +660,9 @@ class DragBoard(QtWidgets.QLabel):
         if self.frame is not None and self.frame.size:
             self._snapshot_gray = cv2.cvtColor(self.frame, cv2.COLOR_BGR2GRAY)
 
-    def recompute_homography(self, refine: bool = False, only_idx: Optional[int] = None):
+    def recompute_homography(
+        self, refine: bool = False, only_idx: Optional[int] = None
+    ):
         """
         Rechnet H auf Basis der aktuellen Punkte.
         - refine=False: keine Punktverschiebung (nur H neu)
@@ -610,8 +678,14 @@ class DragBoard(QtWidgets.QLabel):
 
         try:
             if refine:
-                center = self._ref_center if self._ref_center is not None else tuple(np.mean(self.points, axis=0))
-                self.points = refine_points_on_double_outer(gray, self.points, center=center, only_idx=only_idx)
+                center = (
+                    self._ref_center
+                    if self._ref_center is not None
+                    else tuple(np.mean(self.points, axis=0))
+                )
+                self.points = refine_points_on_double_outer(
+                    gray, self.points, center=center, only_idx=only_idx
+                )
 
             H_world = compute_H_world2img(self.points.astype(np.float32))
             H_tpl = templatePx_to_image_H(H_world)
@@ -623,7 +697,6 @@ class DragBoard(QtWidgets.QLabel):
             self.H_world2img = None
             self.H_tplPx2img = None
             self._h_dirty = True
-
 
     def homography(self) -> Optional[np.ndarray]:
         """
@@ -642,37 +715,51 @@ class DragBoard(QtWidgets.QLabel):
         scale = min(rect.width() / ps.width(), rect.height() / ps.height())
         dw, dh = ps.width() * scale, ps.height() * scale
         ox, oy = (rect.width() - dw) / 2.0, (rect.height() - dh) / 2.0
-        p.drawPixmap(QtCore.QRectF(ox, oy, dw, dh), pm, QtCore.QRectF(0, 0, ps.width(), ps.height()))
+        p.drawPixmap(
+            QtCore.QRectF(ox, oy, dw, dh),
+            pm,
+            QtCore.QRectF(0, 0, ps.width(), ps.height()),
+        )
         return scale, ox, oy, ps
 
-    def _img_to_widget(self, x_img: float, y_img: float, ox: float, oy: float,
-                       scale: float, ps: QtCore.QSize) -> tuple[float, float]:
+    def _img_to_widget(
+        self,
+        x_img: float,
+        y_img: float,
+        ox: float,
+        oy: float,
+        scale: float,
+        ps: QtCore.QSize,
+    ) -> tuple[float, float]:
         """Mapt Bildkoordinate (Pixel im Kameraframe) in Widgetkoordinate."""
         fw, fh = self.frame.shape[1], self.frame.shape[0]
         x = ox + (x_img / fw) * (ps.width() * scale)
         y = oy + (y_img / fh) * (ps.height() * scale)
         return float(x), float(y)
 
-    def _draw_magnifier(self, p: QtGui.QPainter, ox: float, oy: float,
-                        scale: float, ps: QtCore.QSize):
+    def _draw_magnifier(
+        self, p: QtGui.QPainter, ox: float, oy: float, scale: float, ps: QtCore.QSize
+    ):
         if not self._mag_active or self.frame is None or not self.frame.size:
             return
 
         xi, yi = self._mag_last_img
-        dst_d = int(self._mag_size)               # Durchmesser on-screen
-        zoom  = float(self._mag_zoom)
-        src_d = max(12, int(round(dst_d / zoom))) # Quell-Kantenlänge (quadratisch)
+        dst_d = int(self._mag_size)  # Durchmesser on-screen
+        zoom = float(self._mag_zoom)
+        src_d = max(12, int(round(dst_d / zoom)))  # Quell-Kantenlänge (quadratisch)
 
         # --- ROI robust zentriert um (xi, yi) holen ---
         # getRectSubPix behandelt Out-of-bounds sauber; kein manuelles Clamp nötig
         try:
-            patch = cv2.getRectSubPix(self.frame, (src_d, src_d), (float(xi), float(yi)))
+            patch = cv2.getRectSubPix(
+                self.frame, (src_d, src_d), (float(xi), float(yi))
+            )
         except cv2.error:
             # Fallback: falls Kamera wechselt etc.
             h, w = self.frame.shape[:2]
             x0 = int(round(max(0, min(w - src_d, xi - src_d * 0.5))))
             y0 = int(round(max(0, min(h - src_d, yi - src_d * 0.5))))
-            patch = self.frame[y0:y0 + src_d, x0:x0 + src_d]
+            patch = self.frame[y0 : y0 + src_d, x0 : x0 + src_d]
 
         # Hochskalieren (nearest = knackig)
         patch = cv2.resize(patch, (dst_d, dst_d), interpolation=cv2.INTER_NEAREST)
@@ -700,8 +787,11 @@ class DragBoard(QtWidgets.QLabel):
 
             # Clipping und Patch malen
             p.setClipPath(path)
-            p.drawPixmap(QtCore.QRectF(x_draw, y_draw, dst_d, dst_d), pm,
-                        QtCore.QRectF(0, 0, pm.width(), pm.height()))
+            p.drawPixmap(
+                QtCore.QRectF(x_draw, y_draw, dst_d, dst_d),
+                pm,
+                QtCore.QRectF(0, 0, pm.width(), pm.height()),
+            )
             p.setClipping(False)
 
             # Rand
@@ -721,12 +811,11 @@ class DragBoard(QtWidgets.QLabel):
         finally:
             p.restore()
 
-
     def paintEvent(self, ev):
         p = QtGui.QPainter(self)
         p.setRenderHints(
-            QtGui.QPainter.RenderHint.Antialiasing |
-            QtGui.QPainter.RenderHint.SmoothPixmapTransform
+            QtGui.QPainter.RenderHint.Antialiasing
+            | QtGui.QPainter.RenderHint.SmoothPixmapTransform
         )
 
         if self.frame is None or not self.frame.size:
@@ -744,18 +833,28 @@ class DragBoard(QtWidgets.QLabel):
             x = ox + (x_img / fw) * (ps.width() * scale)
             y = oy + (y_img / fh) * (ps.height() * scale)
 
-            pen_color = self.color_active if idx == self._active_idx else self.color_point
+            pen_color = (
+                self.color_active if idx == self._active_idx else self.color_point
+            )
             pen = QtGui.QPen(pen_color, self.pt_thickness)
             pen.setCosmetic(True)
             p.setPen(pen)
             p.setBrush(QtCore.Qt.BrushStyle.NoBrush)
 
             # Hohler Kreis
-            p.drawEllipse(QtCore.QPointF(float(x), float(y)), self.pt_radius, self.pt_radius)
+            p.drawEllipse(
+                QtCore.QPointF(float(x), float(y)), self.pt_radius, self.pt_radius
+            )
             # Crosshair
             L = self.cross_len
-            p.drawLine(QtCore.QPointF(float(x - L), float(y)), QtCore.QPointF(float(x + L), float(y)))
-            p.drawLine(QtCore.QPointF(float(x), float(y - L)), QtCore.QPointF(float(x), float(y + L)))
+            p.drawLine(
+                QtCore.QPointF(float(x - L), float(y)),
+                QtCore.QPointF(float(x + L), float(y)),
+            )
+            p.drawLine(
+                QtCore.QPointF(float(x), float(y - L)),
+                QtCore.QPointF(float(x), float(y + L)),
+            )
 
             # Label
             p.setPen(QtGui.QPen(self.color_label))
@@ -768,19 +867,25 @@ class DragBoard(QtWidgets.QLabel):
             try:
                 h, w = self.frame.shape[:2]
                 warped = cv2.warpPerspective(
-                    GRID_600, H_tpl, (w, h),
+                    GRID_600_RGBA,
+                    H_tpl,
+                    (w, h),
                     flags=cv2.INTER_LINEAR,
-                    borderMode=cv2.BORDER_TRANSPARENT
+                    borderMode=cv2.BORDER_CONSTANT,
+                    borderValue=(0, 0, 0, 0),  # komplett transparent
                 )
-                wpm = cvimg_to_qpix(warped)
-                p.setOpacity(self.alpha)
+                wpm = cvimg_to_qpix_any(warped)
+
+                # Overlay bringt seine eigene Alpha mit → keine globale Opacity nötig
+                # (wenn du global dämpfen willst, setz z.B. p.setOpacity(0.9) davor)
                 self._paint_pixmap(p, wpm)
-                p.setOpacity(1.0)
 
                 # Wedge
                 if self._wedge_tmpl is not None:
                     try:
-                        pts_img = cv2.perspectiveTransform(self._wedge_tmpl, H_tpl).reshape(-1, 2)
+                        pts_img = cv2.perspectiveTransform(
+                            self._wedge_tmpl, H_tpl
+                        ).reshape(-1, 2)
                         fw, fh = self.frame.shape[1], self.frame.shape[0]
                         path = QtGui.QPainterPath()
                         first = True
@@ -788,7 +893,8 @@ class DragBoard(QtWidgets.QLabel):
                             x = ox + (x_img / fw) * (ps.width() * scale)
                             y = oy + (y_img / fh) * (ps.height() * scale)
                             if first:
-                                path.moveTo(float(x), float(y)); first = False
+                                path.moveTo(float(x), float(y))
+                                first = False
                             else:
                                 path.lineTo(float(x), float(y))
                         path.closeSubpath()
@@ -802,7 +908,6 @@ class DragBoard(QtWidgets.QLabel):
 
         # --- 3) Lupe IMMER zuletzt (on top) ---
         self._draw_magnifier(p, ox, oy, scale, ps)
-
 
     # ----- Maus/Tastatur -----
     def _img_coords_from_mouse(self, e: QtGui.QMouseEvent):
@@ -830,7 +935,7 @@ class DragBoard(QtWidgets.QLabel):
             self._active_idx = self._drag_idx
             # Mittelpunkt für den gesamten Drag einfrieren:
             self._ref_center = tuple(np.mean(self.points, axis=0))
-        self._mag_active = (self._drag_idx >= 0)
+        self._mag_active = self._drag_idx >= 0
         self._mag_last_img = (xi, yi)
         self.update()
 
@@ -850,35 +955,50 @@ class DragBoard(QtWidgets.QLabel):
         self.recompute_homography(refine=False)
         self.update()
 
-
     def mouseReleaseEvent(self, _e: QtGui.QMouseEvent):
         idx = self._drag_idx
         self._drag_idx = -1
         self._mag_active = False
         self.set_snapshot_from_current_frame()
         # Nur den eben gesetzten Punkt fein­snappen (optional; kannst du auch weglassen)
-        self.recompute_homography(refine=True, only_idx=(idx if idx is not None and idx >= 0 else None))
+        self.recompute_homography(
+            refine=True, only_idx=(idx if idx is not None and idx >= 0 else None)
+        )
         self.update()
-
 
     def keyPressEvent(self, e: QtGui.QKeyEvent):
         k = e.key()
         step = 1.0
-        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:   step = 5.0
-        if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier: step = 20.0
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier:
+            step = 5.0
+        if e.modifiers() & QtCore.Qt.KeyboardModifier.ControlModifier:
+            step = 20.0
 
-        if   k == QtCore.Qt.Key.Key_Left:  self.points[self._active_idx, 0] -= step
-        elif k == QtCore.Qt.Key.Key_Right: self.points[self._active_idx, 0] += step
-        elif k == QtCore.Qt.Key.Key_Up:    self.points[self._active_idx, 1] -= step
-        elif k == QtCore.Qt.Key.Key_Down:  self.points[self._active_idx, 1] += step
-        elif k in (QtCore.Qt.Key.Key_1, QtCore.Qt.Key.Key_2, QtCore.Qt.Key.Key_3, QtCore.Qt.Key.Key_4):
+        if k == QtCore.Qt.Key.Key_Left:
+            self.points[self._active_idx, 0] -= step
+        elif k == QtCore.Qt.Key.Key_Right:
+            self.points[self._active_idx, 0] += step
+        elif k == QtCore.Qt.Key.Key_Up:
+            self.points[self._active_idx, 1] -= step
+        elif k == QtCore.Qt.Key.Key_Down:
+            self.points[self._active_idx, 1] += step
+        elif k in (
+            QtCore.Qt.Key.Key_1,
+            QtCore.Qt.Key.Key_2,
+            QtCore.Qt.Key.Key_3,
+            QtCore.Qt.Key.Key_4,
+        ):
             self._active_idx = int(k - QtCore.Qt.Key.Key_1)
             self.update()
             return
         elif k == QtCore.Qt.Key.Key_R:
             # 'R' = refine alle; Shift+R = nur aktiver
             self.set_snapshot_from_current_frame()
-            only = self._active_idx if (e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier) else None
+            only = (
+                self._active_idx
+                if (e.modifiers() & QtCore.Qt.KeyboardModifier.ShiftModifier)
+                else None
+            )
             self.recompute_homography(refine=True, only_idx=only)
             self.update()
             return
@@ -891,11 +1011,10 @@ class DragBoard(QtWidgets.QLabel):
         self.update()
 
 
-
-
 # ===================
 # 6) CamPanel (1 Cam)
 # ===================
+
 
 class CamPanel(QtWidgets.QFrame):
     """
@@ -912,11 +1031,12 @@ class CamPanel(QtWidgets.QFrame):
 
         # Ansicht
         self.view = DragBoard()
-        self.view.set_wedge_template(90.0 + WEDGE_SEGMENT_CENTER_OFFSET_DEG)  # 20-Mitte nach oben
+        self.view.set_wedge_template(
+            90.0 + WEDGE_SEGMENT_CENTER_OFFSET_DEG
+        )  # 20-Mitte nach oben
 
-        #self.view.set_wedge_template(90.0)  # 20 nach oben im Template
-        #self.view.set_wedge_template(99.0)  # 20-MITTE nach oben (90° + 9°)
-
+        # self.view.set_wedge_template(90.0)  # 20 nach oben im Template
+        # self.view.set_wedge_template(99.0)  # 20-MITTE nach oben (90° + 9°)
 
         # Kameraauswahl (Items füllt TripleCalibration)
         self.cmb = QtWidgets.QComboBox()
@@ -925,12 +1045,24 @@ class CamPanel(QtWidgets.QFrame):
 
         # Entzerrung (grob)
         self.cb_undist = QtWidgets.QCheckBox("Undistort")
-        self.k1 = QtWidgets.QDoubleSpinBox(); self.k1.setRange(-0.50, 0.50); self.k1.setDecimals(3); self.k1.setSingleStep(0.005); self.k1.setValue(0.000); self.k1.setPrefix("k1 ")
-        self.k2 = QtWidgets.QDoubleSpinBox(); self.k2.setRange(-0.50, 0.50); self.k2.setDecimals(3); self.k2.setSingleStep(0.005); self.k2.setValue(0.000); self.k2.setPrefix("k2 ")
+        self.k1 = QtWidgets.QDoubleSpinBox()
+        self.k1.setRange(-0.50, 0.50)
+        self.k1.setDecimals(3)
+        self.k1.setSingleStep(0.005)
+        self.k1.setValue(0.000)
+        self.k1.setPrefix("k1 ")
+        self.k2 = QtWidgets.QDoubleSpinBox()
+        self.k2.setRange(-0.50, 0.50)
+        self.k2.setDecimals(3)
+        self.k2.setSingleStep(0.005)
+        self.k2.setValue(0.000)
+        self.k2.setPrefix("k2 ")
 
         # Nudge-Buttons ±18° fürs Wedge (visuell)
-        self.btn_left  = QtWidgets.QToolButton(); self.btn_left.setText("⟲")
-        self.btn_right = QtWidgets.QToolButton(); self.btn_right.setText("⟳")
+        self.btn_left = QtWidgets.QToolButton()
+        self.btn_left.setText("⟲")
+        self.btn_right = QtWidgets.QToolButton()
+        self.btn_right.setText("⟳")
 
         # Auto-Knopf
         self.btn_auto = QtWidgets.QPushButton("Auto")
@@ -953,9 +1085,10 @@ class CamPanel(QtWidgets.QFrame):
         def _on_undist_changed():
             # Nach Entzerrungswechsel H stabil neu berechnen
             self.view.set_snapshot_from_current_frame()
-            if self.view.points.shape == (4,2):
+            if self.view.points.shape == (4, 2):
                 self.view.recompute_homography(refine=True)
             self.view.update()
+
         self.cb_undist.stateChanged.connect(lambda *_: _on_undist_changed())
         self.k1.valueChanged.connect(lambda *_: _on_undist_changed())
         self.k2.valueChanged.connect(lambda *_: _on_undist_changed())
@@ -983,20 +1116,22 @@ class CamPanel(QtWidgets.QFrame):
         cap = open_capture(cam_id, self.res, self.fps)
         if cap is None:
             QtWidgets.QMessageBox.warning(
-                self, "Camera",
+                self,
+                "Camera",
                 f"Cannot open camera {cam_id} with any backend.\n"
                 f"• Prüfe Windows > Datenschutz > Kamera (Desktop-Apps zulassen)\n"
-                f"• Schließe andere Programme (OBS/Teams/Browser), die die Cam blockieren"
+                f"• Schließe andere Programme (OBS/Teams/Browser), die die Cam blockieren",
             )
             return
         # optional: eine Probe lesen
         ok, frm = cap.read()
         if not ok or frm is None or frm.size == 0:
             cap.release()
-            QtWidgets.QMessageBox.warning(self, "Camera", f"Camera {cam_id} opened, but no frames.")
+            QtWidgets.QMessageBox.warning(
+                self, "Camera", f"Camera {cam_id} opened, but no frames."
+            )
             return
         self.cap = cap
-
 
     def stop(self):
         if self.cap is not None:
@@ -1010,17 +1145,22 @@ class CamPanel(QtWidgets.QFrame):
             return
         ok, frame = self.cap.read()
         if not ok:
-            self.view.set_frame(None); return
+            self.view.set_frame(None)
+            return
         if self.cb_undist.isChecked():
-            frame = undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
+            frame = undistort_simple(
+                frame, float(self.k1.value()), float(self.k2.value())
+            )
         self._last_frame = frame.copy()
         self.view.set_frame(frame.copy())
 
     def set_globals(self, res: tuple[int, int], fps: int):
-        self.res = res; self.fps = fps
+        self.res = res
+        self.fps = fps
         if self.cap:
             idx = self.cmb.currentData()
-            if idx is not None: self.start(int(idx))
+            if idx is not None:
+                self.start(int(idx))
 
     def current_overlay_h(self) -> Optional[np.ndarray]:
         return self.view.H_tplPx2img
@@ -1045,7 +1185,9 @@ class CamPanel(QtWidgets.QFrame):
         if not self.cap:
             cam = self.cmb.currentData()
             if cam is None:
-                QtWidgets.QMessageBox.information(self, "Auto", "Bitte zuerst eine Kamera wählen.")
+                QtWidgets.QMessageBox.information(
+                    self, "Auto", "Bitte zuerst eine Kamera wählen."
+                )
                 return
             self.start(int(cam))
             if not self.cap:
@@ -1058,14 +1200,18 @@ class CamPanel(QtWidgets.QFrame):
 
         # optional undistort, damit die Kreissuche einfacher wird
         if self.cb_undist.isChecked():
-            frame = undistort_simple(frame, float(self.k1.value()), float(self.k2.value()))
+            frame = undistort_simple(
+                frame, float(self.k1.value()), float(self.k2.value())
+            )
 
         gray = _prep_gray(frame)
 
         found = detect_board_circle(gray)
         if not found:
             QtWidgets.QMessageBox.warning(
-                self, "Auto", "Board-Kreis nicht gefunden.\nLicht & Kontrast prüfen, Kamera näher/zentrischer ausrichten."
+                self,
+                "Auto",
+                "Board-Kreis nicht gefunden.\nLicht & Kontrast prüfen, Kamera näher/zentrischer ausrichten.",
             )
             return
 
@@ -1092,7 +1238,9 @@ class CamPanel(QtWidgets.QFrame):
 
         # In die View eintragen
         self.view.set_points(pts)
-        self.view.set_frame(frame.copy())  # sichert, dass Snapshot auf gleichem Bild basiert
+        self.view.set_frame(
+            frame.copy()
+        )  # sichert, dass Snapshot auf gleichem Bild basiert
         self.view.set_snapshot_from_current_frame()
         # fixen Mittelpunkt fürs Refinement setzen (verhindert „Wandern“)
         self.view._ref_center = (cx, cy)
@@ -1112,18 +1260,20 @@ class CamPanel(QtWidgets.QFrame):
         if hasattr(self.view, "_wedge_angle_deg"):
             self.view.set_wedge_template(self.view._wedge_angle_deg + delta_deg)
 
-
-    def _appdata_calib_path(filename: str = "calibration_last.json") -> str:
-        base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
-        if not base:
-            base = os.path.join(os.path.expanduser("~"), ".tripleone")
-        os.makedirs(base, exist_ok=True)
-        return os.path.join(base, filename)
+    # def _appdata_calib_path(filename: str = "calibration_last.json") -> str:
+    #   base = QStandardPaths.writableLocation(
+    #      QStandardPaths.StandardLocation.AppDataLocation
+    # )
+    # if not base:
+    #   base = os.path.join(os.path.expanduser("~"), ".tripleone")
+    # os.makedirs(base, exist_ok=True)
+    # return os.path.join(base, filename)
 
 
 # ===========================
 # 7) Hauptdialog / Save/Load
 # ===========================
+
 
 class TripleCalibration(QtWidgets.QDialog):
     def __init__(self, parent=None):
@@ -1162,8 +1312,8 @@ class TripleCalibration(QtWidgets.QDialog):
             self.cmb_fps.addItem(str(f), f)
 
         self.btn_save_agent = QtWidgets.QPushButton("Save to Agent")
-        self.btn_save_file  = QtWidgets.QPushButton("Save to File")
-        self.btn_load_file  = QtWidgets.QPushButton("Load from File")
+        self.btn_save_file = QtWidgets.QPushButton("Save to File")
+        self.btn_load_file = QtWidgets.QPushButton("Load from File")
         self.btn_save_default = QtWidgets.QPushButton("Save as Default")
 
         grid = QtWidgets.QGridLayout()
@@ -1173,14 +1323,18 @@ class TripleCalibration(QtWidgets.QDialog):
         grid.addWidget(self.cmb_fps, 1, 1)
         grid.addItem(
             QtWidgets.QSpacerItem(
-                40, 20, QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Minimum
+                40,
+                20,
+                QtWidgets.QSizePolicy.Policy.Expanding,
+                QtWidgets.QSizePolicy.Policy.Minimum,
             ),
-            1, 2
+            1,
+            2,
         )
-        grid.addWidget(self.btn_load_file,   1, 3)
-        grid.addWidget(self.btn_save_file,   1, 4)
-        grid.addWidget(self.btn_save_agent,  1, 5)
-        grid.addWidget(self.btn_save_default,1, 6)
+        grid.addWidget(self.btn_load_file, 1, 3)
+        grid.addWidget(self.btn_save_file, 1, 4)
+        grid.addWidget(self.btn_save_agent, 1, 5)
+        grid.addWidget(self.btn_save_default, 1, 6)
 
         root = QtWidgets.QVBoxLayout(self)
         root.addWidget(title)
@@ -1244,7 +1398,7 @@ class TripleCalibration(QtWidgets.QDialog):
             p.view.recompute_homography(refine=False)
 
             H_tpl = p.current_overlay_h()
-            H_w   = p.current_world_h()
+            H_w = p.current_world_h()
             if H_tpl is None or H_w is None:
                 continue
             data[f"camera_{i}"] = {
@@ -1267,7 +1421,9 @@ class TripleCalibration(QtWidgets.QDialog):
         try:
             with open(path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
-            QtWidgets.QMessageBox.information(self, "Save", f"Calibration saved to {path}")
+            QtWidgets.QMessageBox.information(
+                self, "Save", f"Calibration saved to {path}"
+            )
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Save", str(e))
 
@@ -1341,21 +1497,24 @@ class TripleCalibration(QtWidgets.QDialog):
 
         for p in self.panels:
             H_tpl = p.current_overlay_h()
-            H_w   = p.current_world_h()
+            H_w = p.current_world_h()
             if H_tpl is not None:
                 Hs_overlay.append(H_tpl.tolist())
             if H_w is not None:
                 Hs_world.append(H_w.tolist())
-            intr_list.append({
-                "k1": float(p.k1.value()),
-                "k2": float(p.k2.value()),
-                "enabled": bool(p.cb_undist.isChecked()),
-            })
+            intr_list.append(
+                {
+                    "k1": float(p.k1.value()),
+                    "k2": float(p.k2.value()),
+                    "enabled": bool(p.cb_undist.isChecked()),
+                }
+            )
 
         if not Hs_world:
             QtWidgets.QMessageBox.warning(
-                self, "Calibration",
-                "Keine gültigen Homographien vorhanden. Punkte setzen oder Auto nutzen."
+                self,
+                "Calibration",
+                "Keine gültigen Homographien vorhanden. Punkte setzen oder Auto nutzen.",
             )
             return
 
@@ -1375,10 +1534,14 @@ class TripleCalibration(QtWidgets.QDialog):
         try:
             save_calibration(cfg)
         except Exception as e:
-            QtWidgets.QMessageBox.critical(self, "Save", f"Fehler beim Speichern beim Agent:\n{e}")
+            QtWidgets.QMessageBox.critical(
+                self, "Save", f"Fehler beim Speichern beim Agent:\n{e}"
+            )
             return
 
-        QtWidgets.QMessageBox.information(self, "Save", "Kalibrierung beim Agent gespeichert.")
+        QtWidgets.QMessageBox.information(
+            self, "Save", "Kalibrierung beim Agent gespeichert."
+        )
 
     # -------- Auto-Last-Session (AppData) --------
     def _save_last_session(self):
@@ -1388,7 +1551,7 @@ class TripleCalibration(QtWidgets.QDialog):
                 "resolution": list(map(int, self.cmb_res.currentData())),
                 "fps": int(self.cmb_fps.currentData()),
             },
-            "panels": []
+            "panels": [],
         }
         for p in self.panels:
             # defensiv Homographien (ohne Refinement)
@@ -1396,7 +1559,7 @@ class TripleCalibration(QtWidgets.QDialog):
             p.view.recompute_homography(refine=False)
 
             H_tpl = p.current_overlay_h()
-            H_w   = p.current_world_h()
+            H_w = p.current_world_h()
             cam_id = p.cmb.currentData()  # kann None sein
             panel = {
                 "camera": None if cam_id is None else int(cam_id),
@@ -1507,9 +1670,3 @@ class TripleCalibration(QtWidgets.QDialog):
 def open_triple_calibration(parent=None):
     dlg = TripleCalibration(parent)
     dlg.exec()
-
-
-
-
-
-
