@@ -444,6 +444,13 @@ document.querySelectorAll('.dart-icon').forEach(img => {
   document.getElementById('btnUndo').onclick = undo;
   document.getElementById('btnNext').onclick = nextPlayer;
 </script>
+<script>
+  // Optional: API & Kamera setzen
+  window.TRIPLEONE_API = 'http://127.0.0.1:8017';
+  window.TRIPLEONE_CAMERA = 'cam0'; // oder '' für alle
+</script>
+<script src="assets/auto_hits_addThrow.js"></script>
+
 
 </body>
 </html>

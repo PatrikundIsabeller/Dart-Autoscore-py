@@ -268,7 +268,7 @@ class TopBar(QtWidgets.QFrame):
         painter.drawEllipse(5, 5, 12, 12)
         painter.end()
         logo.setPixmap(pix)
-        title = QtWidgets.QLabel("AUTODARTS")
+        title = QtWidgets.QLabel("TRIPLE ONE")
         title.setProperty("class", "title")
 
         left = QtWidgets.QHBoxLayout()
@@ -283,7 +283,7 @@ class TopBar(QtWidgets.QFrame):
 
         online = QtWidgets.QLabel("Online")
         online.setProperty("class", "kbd")
-        user = QtWidgets.QLabel("MAXINATOR1")
+        user = QtWidgets.QLabel("Hier kommt später der Benutzername hin")
         user.setProperty("class", "user")
 
         right = QtWidgets.QHBoxLayout()
