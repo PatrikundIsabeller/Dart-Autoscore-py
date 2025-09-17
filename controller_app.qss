@@ -1,0 +1,151 @@
+/* ===== App-Grundfarben (dunkel) ===== */
+* {
+  color: #e5e7eb;
+  background: transparent;
+}
+
+QWidget {
+  background: #0f1117;
+  selection-background-color: #3b82f6;
+  selection-color: #ffffff;
+}
+
+/* ===== TopBar ===== */
+QFrame#TopBar {
+  background: #0b1020;
+  border-bottom: 1px solid #202538;
+}
+
+/* Titel links */
+QLabel[class="title"] {
+  color: #e5e7ff;
+  font-size: 14pt;
+  font-weight: 700;
+  letter-spacing: 1px;
+}
+
+/* Breadcrumb mittig */
+QLabel[class="crumb"] {
+  color: #94a3b8;
+  font-size: 10pt;
+}
+
+/* User-Label rechts */
+QLabel[class="user"] {
+  color: #c7d2fe;
+  font-weight: 600;
+}
+
+/* Online/Offline-Pill */
+QLabel[class="kbd"] {
+  background: #0f1a33;
+  color: #a7f3d0;
+  border: 1px solid #1f324f;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-family: "Consolas", "Cascadia Code", monospace;
+  font-size: 9pt;
+}
+
+/* Offline-Variante (wir setzen class="kbd danger") */
+QLabel[class="kbd danger"] {
+  background: #2a0f10;
+  color: #fecaca;
+  border: 1px solid #512021;
+}
+
+/* ===== Buttons ===== */
+QPushButton {
+  background: #1f2437;
+  color: #e5e7eb;
+  border: 1px solid #2a3048;
+  border-radius: 8px;
+  padding: 6px 12px;
+}
+QPushButton:hover {
+  background: #27304a;
+}
+QPushButton:pressed {
+  background: #1b2236;
+}
+QPushButton:disabled {
+  color: #9ca3af;
+  background: #15192b;
+  border-color: #20263d;
+}
+
+/* Akzent-Buttons (falls du Property class="accent" setzt) */
+QPushButton[class="accent"] {
+  background: #3b82f6;
+  border-color: #2563eb;
+  color: #ffffff;
+}
+QPushButton[class="accent"]:hover {
+  background: #2563eb;
+}
+
+/* ===== Eingaben ===== */
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+  background: #0f1324;
+  border: 1px solid #2a3048;
+  border-radius: 8px;
+  padding: 6px 8px;
+  selection-background-color: #3b82f6;
+}
+QComboBox QAbstractItemView {
+  background: #0f1324;
+  border: 1px solid #2a3048;
+  selection-background-color: #3b82f6;
+}
+
+/* Checkbox/Radio */
+QCheckBox {
+  spacing: 8px;
+}
+QCheckBox::indicator {
+  width: 16px; height: 16px;
+}
+QCheckBox::indicator:unchecked {
+  border: 1px solid #334166;
+  background: #0f1324;
+  border-radius: 4px;
+}
+QCheckBox::indicator:checked {
+  border: 1px solid #334166;
+  background: #3b82f6;
+  border-radius: 4px;
+}
+
+/* GroupBox/Frames */
+QGroupBox {
+  border: 1px solid #202538;
+  margin-top: 12px;
+  border-radius: 10px;
+  padding: 10px;
+}
+QGroupBox::title {
+  subcontrol-origin: margin;
+  subcontrol-position: top left;
+  padding: 0 6px;
+  color: #94a3b8;
+}
+
+/* Scrollbars (schmal) */
+QScrollBar:vertical {
+  background: #0f1117; width: 10px; margin: 0;
+}
+QScrollBar::handle:vertical {
+  background: #25304a; min-height: 20px; border-radius: 5px;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+  height: 0; background: none;
+}
+QScrollBar:horizontal {
+  background: #0f1117; height: 10px; margin: 0;
+}
+QScrollBar::handle:horizontal {
+  background: #25304a; min-width: 20px; border-radius: 5px;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+  width: 0; background: none;
+}

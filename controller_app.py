@@ -21,6 +21,10 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 from calibration_dialog import CalibrationDialog
 from calibrate_wizard import open_calibration
 
+from auth_client import AuthClient
+from login_dialog import LoginDialog
+
+
 # controller_app.py
 from PyQt6.QtWidgets import QMainWindow, QMessageBox, QPushButton
 from play_launcher import open_play_dashboard, is_calibration_valid  # ← reuse
@@ -30,6 +34,7 @@ import requests
 import time
 import os
 import math
+from pathlib import Path
 
 
 APP_VERSION = "v0.1.0"
@@ -249,6 +254,10 @@ class FooterBar(QtWidgets.QFrame):
 
 
 class TopBar(QtWidgets.QFrame):
+    # <-- Signals, damit MainWindow Login/Logout handeln kann
+    loginClicked = QtCore.pyqtSignal()
+    logoutClicked = QtCore.pyqtSignal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("TopBar")
@@ -256,6 +265,7 @@ class TopBar(QtWidgets.QFrame):
         lay.setContentsMargins(12, 8, 12, 8)
         lay.setSpacing(12)
 
+        # left: Logo + Titel
         logo = QtWidgets.QLabel()
         pix = QtGui.QPixmap(22, 22)
         pix.fill(QtCore.Qt.GlobalColor.transparent)
@@ -278,26 +288,56 @@ class TopBar(QtWidgets.QFrame):
         left_box = QtWidgets.QWidget()
         left_box.setLayout(left)
 
-        crumb = QtWidgets.QLabel("🏠 / Desktop / Detection")
-        crumb.setProperty("class", "crumb")
+        # breadcrumb (optional)
+        self.crumb = QtWidgets.QLabel("🏠 / Desktop / Detection")
+        self.crumb.setProperty("class", "crumb")
 
-        online = QtWidgets.QLabel("Online")
-        online.setProperty("class", "kbd")
-        user = QtWidgets.QLabel("Hier kommt später der Benutzername hin")
-        user.setProperty("class", "user")
+        # right: Online-Status + User + Buttons
+        self.lbl_online = QtWidgets.QLabel("Online")
+        self.lbl_online.setProperty("class", "kbd")
+
+        self.lbl_user = QtWidgets.QLabel("Nicht angemeldet")
+        self.lbl_user.setProperty("class", "user")
+
+        self.btn_login = QtWidgets.QPushButton("Login…")
+        self.btn_logout = QtWidgets.QPushButton("Logout")
+        self.btn_logout.setEnabled(False)
+        self.btn_logout.setVisible(False)
+
+        # Buttons an Signals koppeln (TopBar emittiert – MainWindow reagiert)
+        self.btn_login.clicked.connect(self.loginClicked.emit)
+        self.btn_logout.clicked.connect(self.logoutClicked.emit)
 
         right = QtWidgets.QHBoxLayout()
         right.setSpacing(10)
-        right.addWidget(online)
-        right.addWidget(user)
+        right.addWidget(self.lbl_online)
+        right.addWidget(self.lbl_user)
+        right.addWidget(self.btn_login)
+        right.addWidget(self.btn_logout)
         right_box = QtWidgets.QWidget()
         right_box.setLayout(right)
 
         lay.addWidget(left_box)
         lay.addStretch(1)
-        lay.addWidget(crumb)
+        lay.addWidget(self.crumb)
         lay.addStretch(1)
         lay.addWidget(right_box)
+
+    def set_user_status(self, text: str, logged_in: bool):
+        """
+        Vom MainWindow aufrufen, um UI zu aktualisieren.
+        """
+        self.lbl_user.setText(text)
+        self.btn_login.setVisible(not logged_in)
+        self.btn_login.setEnabled(not logged_in)
+        self.btn_logout.setVisible(logged_in)
+        self.btn_logout.setEnabled(logged_in)
+
+    def set_online(self, ok: bool):
+        self.lbl_online.setText("Online" if ok else "Offline")
+        self.lbl_online.setProperty("class", "kbd" if ok else "kbd danger")
+        self.style().unpolish(self.lbl_online)
+        self.style().polish(self.lbl_online)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -320,9 +360,23 @@ class MainWindow(QtWidgets.QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(8)
 
-        # Topbar
+        # Topbar ERST erzeugen, DANN benutzen
         self.topbar = TopBar()
         root.addWidget(self.topbar)
+
+        # Auth-Client
+        self.auth = AuthClient(API_URL)
+
+        # TopBar-Events anbinden
+        self.topbar.loginClicked.connect(self._on_login)
+        self.topbar.logoutClicked.connect(self._on_logout)
+
+        # Breadcrumb & Account-Status
+        self.topbar.crumb.setText("🏠 / Desktop / Detection")
+        self._refresh_account_label()
+
+        # Beim Start Account/Online-Status setzen
+        self._refresh_account_label()
 
         # Main Grid
         main = QtWidgets.QHBoxLayout()
@@ -443,7 +497,7 @@ class MainWindow(QtWidgets.QMainWindow):
         root.addWidget(self.footer)
 
         self.setCentralWidget(central)
-        self.apply_style()
+        # self.apply_style()
 
         # ---- Status-Poller starten ---------------------------------------
         self.poller = StatusPoller(
@@ -572,18 +626,74 @@ class MainWindow(QtWidgets.QMainWindow):
             """
         )
 
+    def _refresh_account_label(self):
+        """Aktualisiert User-Label in der TopBar und Online/Offline."""
+        # Online/Offline prüfen
+        online_ok = True
+        try:
+            # leichter Ping: /me reicht (liefert None, wenn nicht eingeloggt)
+            user = self.auth.me()
+        except Exception:
+            user = None
+            online_ok = False
+
+        # TopBar: Online-Status
+        self.topbar.set_online(online_ok)
+
+        # TopBar: User-Status
+        if user:
+            email = user.get("email") or "Account"
+            self.topbar.set_user_status(email, logged_in=True)
+        else:
+            self.topbar.set_user_status("Nicht angemeldet", logged_in=False)
+
+    def _on_login(self):
+        dlg = LoginDialog(self.auth, self)
+        if dlg.exec() == QtWidgets.QDialog.DialogCode.Accepted:
+            # Token wurde bereits gespeichert; nur Label updaten
+            self._refresh_account_label()
+
+    def _on_logout(self):
+        self.auth.save_token(None)
+        self._refresh_account_label()
+
+    def goto_detection(self):
+        # wenn du einen StackedWidget hast:
+        try:
+            self.stack.setCurrentWidget(self.page_detection)
+        except Exception:
+            pass  # falls du (noch) keinen Stack nutzt, einfach nur Crumb setzen
+        self.topbar.crumb.setText("🏠 / Detection")
+
+    def goto_calibration(self):
+        try:
+            self.stack.setCurrentWidget(self.page_calibration)
+        except Exception:
+            pass
+        self.topbar.crumb.setText("🏠 / Calibration")
+
 
 # ------------------------------- Main ---------------------------------- #
 def main():
     import sys
+    from PyQt6 import QtGui, QtCore
+
+    # Kein setAttribute mehr hier!
+    QtGui.QGuiApplication.setHighDpiScaleFactorRoundingPolicy(
+        QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
 
     app = QtWidgets.QApplication(sys.argv)
     app.setApplicationName("Triple One Controller")
     app.setOrganizationName("Triple One")
 
+    qss_path = Path(__file__).with_name("controller_app.qss")
+    if qss_path.exists():
+        with open(qss_path, "r", encoding="utf-8") as f:
+            app.setStyleSheet(f.read())
+
     w = MainWindow()
     w.show()
-
     sys.exit(app.exec())
 
 
