@@ -115,6 +115,15 @@
     background:var(--panel); border:1px solid var(--panel-bd); border-radius:12px;
     height:56px; display:grid; place-items:center; color:#fff; font-weight:700; font-size:36px;
   }
+    /* Summe zeigen wir groß; bei Bust kurz rot hinterlegt */
+  .sumBox.bust{
+    background: rgba(180,55,55,.25);
+    border-color: rgba(220,100,100,.6);
+    color:#ffe8e8;
+    font-weight:800;
+    letter-spacing:.5px;
+  }
+
   .lane{
     position:relative;
     background:var(--panel); border:1px solid var(--panel-bd);
@@ -283,9 +292,13 @@
   const state = {
     players: game.players.map(p=>({name:p.name, score:BASE})),
     curPlayer: 0,
-    darts: [],   // max 3: {ring,n,label,value}
-    history: []  // {type:'THROW',player,...} | {type:'NEXT',prev}
+    darts: [],           // max 3: {ring,n,label,value}
+    history: [],         // {type:'THROW'|'NEXT'|'BUST', ...}
+    finished: false,     // Leg zu Ende? -> Eingaben sperren
+    turnStartScore: BASE, // Score zu Beginn der aktuellen Aufnahme
+    bustFlash: false     // kurz "BUST" in der Sum-Box anzeigen
   };
+
 
 
   // --- Scorecard HTML ----------------------------------------------------
@@ -335,6 +348,8 @@
 
 // call initially
 renderScores();
+state.turnStartScore = state.players[state.curPlayer].score;
+
 
   // ------- Lanes + Sum -------
   const sumBox = document.getElementById('sumBox');
@@ -347,9 +362,17 @@ renderScores();
       if(d){ lbl.textContent = d.label; lbl.style.opacity = 1; icon.style.opacity = 0; }
       else { lbl.textContent = '';       lbl.style.opacity = 0; icon.style.opacity = .85; }
     });
-    const s = state.darts.reduce((a,t)=>a + (t?.value||0), 0);
-    sumBox.textContent = String(s);
+
+    if(state.bustFlash){
+      sumBox.classList.add('bust');
+      sumBox.textContent = 'BUST';
+    } else {
+      sumBox.classList.remove('bust');
+      const s = state.darts.reduce((a,t)=>a + (t?.value||0), 0);
+      sumBox.textContent = String(s);
+    }
   }
+
   refreshLanes();
 
   // --- Dart-Icon als Data-URI (dein SVG) ------------------------------
@@ -385,9 +408,6 @@ document.querySelectorAll('.dart-icon').forEach(img => {
   btnD.onclick = () => setRing('D');
   btnT.onclick = () => setRing('T');
 
-  // ------- Miss & 25 Buttons (links) -------
-  document.getElementById('btnMiss').onclick = () =>
-    addThrow({ring:'M', n:0, value:0, label:'0'});
 
   document.getElementById('btn25').onclick  = () => {
     const isD = (ring==='D');
@@ -410,7 +430,7 @@ document.querySelectorAll('.dart-icon').forEach(img => {
     addThrow({ring, n, value: mult*n, label: `${ring}${n}`});
     resetRingToSingle();                 // <<< hier zurück auf Single
   });
-
+  // ------- Miss & 25 Buttons (links) -------
   document.getElementById('btnMiss').onclick = () => {
     if(state.finished) return;
     addThrow({ring:'M', n:0, value:0, label:'0'});
@@ -420,30 +440,120 @@ document.querySelectorAll('.dart-icon').forEach(img => {
 
   // ------- Common actions -------
   function addThrow(obj){
+    if(state.finished) return;
+
+    // Aufnahme-Startscore merken
+    if(state.darts.length === 0){
+      state.turnStartScore = state.players[state.curPlayer].score;
+    }
+
+    const outMode = (game.settings.outMode || 'Double'); // "Double" | "Straight" | "Master"
+    const cur = state.players[state.curPlayer];
+    const tentativeNew = cur.score - obj.value;
+
+    // Checkout-Gültigkeit
+    const isDouble = (obj.ring === 'D');
+    const finishValid =
+          (outMode === 'Double')  ? isDouble :
+          (outMode === 'Master')  ? (obj.ring === 'D' || obj.ring === 'T') :
+                                    true; // Straight
+
+    // Bust-Bedingungen
+    const isBust =
+        (tentativeNew < 0) ||
+        (outMode === 'Double' && tentativeNew === 1) ||
+        (tentativeNew === 0 && !finishValid);
+
+    if(isBust){
+      // Wurf anzeigen
+      state.darts.push(obj);
+      state.history.push({type:'THROW', player:state.curPlayer, ...obj});
+
+      // Score revertieren & Bust loggen
+      cur.score = state.turnStartScore;
+      state.history.push({type:'BUST', player:state.curPlayer});
+
+      // BUST-Flash + Auto-Next
+      state.bustFlash = true;
+      renderScores(); refreshLanes();
+      setTimeout(()=>{
+        state.bustFlash = false;
+        state.darts = [];
+        renderScores(); refreshLanes();
+        nextPlayer();
+      }, 700);
+      return;
+    }
+
+    // normal zählen
     state.darts.push(obj);
     state.history.push({type:'THROW', player:state.curPlayer, ...obj});
-    state.players[state.curPlayer].score = Math.max(0, state.players[state.curPlayer].score - obj.value);
+    cur.score = tentativeNew;
     renderScores(); refreshLanes();
+
+    // Checkout?
+    if(tentativeNew === 0){
+      state.finished = true;          // Leg zu Ende -> sperren
+      // Optional kleiner Toast (kannst du weglassen)
+      document.body.insertAdjacentHTML('beforeend',
+        `<div id="legToast" style="position:fixed;inset:auto 0 24px 0;display:flex;justify-content:center;pointer-events:none">
+          <div style="background:#1f2937cc;border:1px solid #6ee7b7;padding:10px 14px;border-radius:12px;color:#d1fae5;font-weight:700">
+            Leg finished!
+          </div>
+        </div>`);
+      setTimeout(()=> document.getElementById('legToast')?.remove(), 1500);
+      return;
+    }
+
+    // Drei Darts voll?
+    // neu: 3. Wurf kurz sichtbar lassen, dann wechseln
+    if (state.darts.length >= 3) {
+      setTimeout(() => {
+        state.darts = [];
+        nextPlayer();
+      }, 350); // 300–400ms fühlt sich gut an
+      return;
+    }
+
   }
+
 
   function undo(){
     const last = state.history.pop(); if(!last) return;
+    state.finished = false;   // <<< wichtig: wieder entsperren
+
     if(last.type==='NEXT'){
       state.curPlayer = last.prev;
       state.darts = collectTurn(state.curPlayer);
       renderScores(); refreshLanes(); return;
     }
+    // falls letzter Eintrag ein BUST war, nimm noch einen zurück
+    if(last.type==='BUST'){
+      const t = state.history.pop();
+      if(t && t.type==='THROW'){
+        state.players[t.player].score += t.value;   // war vor Bust addThrow
+      }
+      state.darts = [];
+      renderScores(); refreshLanes(); 
+      return;
+    }
+    // normaler Throw
     state.players[last.player].score += last.value;
     if(last.player===state.curPlayer){ state.darts.pop(); }
     else { state.curPlayer = last.player; const t = collectTurn(state.curPlayer); t.pop(); state.darts = t; }
     renderScores(); refreshLanes();
   }
 
+
   function nextPlayer(){
+    if(state.finished) return; // nach Leg-Ende kein Wechsel
     state.history.push({type:'NEXT', prev:state.curPlayer});
     state.curPlayer = (state.curPlayer+1)%state.players.length;
-    state.darts = []; renderScores(); refreshLanes();
+    state.darts = [];
+    state.turnStartScore = state.players[state.curPlayer].score; // <<< neu
+    renderScores(); refreshLanes();
   }
+
 
   function collectTurn(player){
     const res=[]; 
@@ -457,6 +567,14 @@ document.querySelectorAll('.dart-icon').forEach(img => {
 
   document.getElementById('btnUndo').onclick = undo;
   document.getElementById('btnNext').onclick = nextPlayer;
+
+  document.getElementById('btn25').onclick  = () => {
+    if(state.finished) return;                    // <<< neu
+    const isD = (ring==='D');
+    addThrow({ring:isD?'D':'S', n:25, value:isD?50:25, label:isD?'D25':'25'});
+    resetRingToSingle();
+  };
+
 </script>
 <script>
   window.TRIPLEONE_API = 'http://127.0.0.1:8017';
