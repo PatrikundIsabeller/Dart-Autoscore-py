@@ -365,6 +365,12 @@ document.querySelectorAll('.dart-icon').forEach(img => {
   const btnD = document.getElementById('tDouble');
   const btnT = document.getElementById('tTriple');
 
+  function resetRingToSingle(){
+    ring = 'S';
+    btnD.classList.remove('is-active');
+    btnT.classList.remove('is-active');
+  }
+
   function setRing(r){
     if(ring === r){
       ring = 'S';
@@ -391,18 +397,26 @@ document.querySelectorAll('.dart-icon').forEach(img => {
   // ------- Feld-Klicks (vereinheitlicht auf [data-n]) -------
   document.getElementById('padGrid').addEventListener('click', (e)=>{
     const key = e.target.closest('[data-n]');
-    if(!key || state.darts.length >= 3) return;
+    if(!key || state.darts.length >= 3 || state.finished) return;
 
     const n = parseInt(key.dataset.n, 10);
-    // 25 nur über die linke Spalte – falls trotzdem vorhanden:
-    if(n === 25){
+    if (n === 25) {
       const isD = (ring === 'D');
       addThrow({ring:isD?'D':'S', n:25, value:isD?50:25, label:isD?'D25':'25'});
+      resetRingToSingle();               // <<< hier zurück auf Single
       return;
     }
     const mult = ring==='D' ? 2 : ring==='T' ? 3 : 1;
     addThrow({ring, n, value: mult*n, label: `${ring}${n}`});
+    resetRingToSingle();                 // <<< hier zurück auf Single
   });
+
+  document.getElementById('btnMiss').onclick = () => {
+    if(state.finished) return;
+    addThrow({ring:'M', n:0, value:0, label:'0'});
+    resetRingToSingle();                 // <<< zurücksetzen
+  };
+
 
   // ------- Common actions -------
   function addThrow(obj){
