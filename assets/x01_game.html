@@ -295,9 +295,12 @@
     darts: [],           // max 3: {ring,n,label,value}
     history: [],         // {type:'THROW'|'NEXT'|'BUST', ...}
     finished: false,     // Leg zu Ende? -> Eingaben sperren
-    turnStartScore: BASE, // Score zu Beginn der aktuellen Aufnahme
-    bustFlash: false     // kurz "BUST" in der Sum-Box anzeigen
+    turnStartScore: BASE,
+    bustFlash: false,    // kurz "BUST"
+    visitEnded: false,   // Aufnahme ist beendet, wartet auf Pfeilentfernung
+    stuckDarts: 0        // wie viele Pfeile stecken im Board (Miss zählt nicht)
   };
+
 
 
 
@@ -410,9 +413,12 @@ document.querySelectorAll('.dart-icon').forEach(img => {
 
 
   document.getElementById('btn25').onclick  = () => {
+    if(state.finished) return;                  // <<< neu
     const isD = (ring==='D');
     addThrow({ring:isD?'D':'S', n:25, value:isD?50:25, label:isD?'D25':'25'});
+    resetRingToSingle();
   };
+
 
   // ------- Feld-Klicks (vereinheitlicht auf [data-n]) -------
   document.getElementById('padGrid').addEventListener('click', (e)=>{
@@ -458,43 +464,41 @@ document.querySelectorAll('.dart-icon').forEach(img => {
           (outMode === 'Master')  ? (obj.ring === 'D' || obj.ring === 'T') :
                                     true; // Straight
 
-    // Bust-Bedingungen
+    // Bust?
     const isBust =
         (tentativeNew < 0) ||
         (outMode === 'Double' && tentativeNew === 1) ||
         (tentativeNew === 0 && !finishValid);
 
-    if(isBust){
-      // Wurf anzeigen
-      state.darts.push(obj);
-      state.history.push({type:'THROW', player:state.curPlayer, ...obj});
+    // Wurf aufnehmen
+    state.darts.push(obj);
+    state.history.push({type:'THROW', player:state.curPlayer, ...obj});
 
+    // stuckDarts nur erhöhen, wenn kein Miss (label '0' oder ring 'M' ist Miss)
+    const isMiss = (obj.label === '0' || obj.ring === 'M');
+    if(!isMiss) state.stuckDarts++;
+
+    if(isBust){
       // Score revertieren & Bust loggen
       cur.score = state.turnStartScore;
       state.history.push({type:'BUST', player:state.curPlayer});
 
-      // BUST-Flash + Auto-Next
+      // Bust nur kurz anzeigen, danach auf Pfeilentfernung warten
       state.bustFlash = true;
+      state.visitEnded = true;          // Aufnahme endet mit Bust
       renderScores(); refreshLanes();
-      setTimeout(()=>{
-        state.bustFlash = false;
-        state.darts = [];
-        renderScores(); refreshLanes();
-        nextPlayer();
-      }, 700);
+      setTimeout(()=>{ state.bustFlash = false; refreshLanes(); }, 700);
+      // KEIN nextPlayer hier – checkAutoNext übernimmt, sobald stuckDarts == 0
       return;
     }
 
     // normal zählen
-    state.darts.push(obj);
-    state.history.push({type:'THROW', player:state.curPlayer, ...obj});
     cur.score = tentativeNew;
     renderScores(); refreshLanes();
 
     // Checkout?
     if(tentativeNew === 0){
-      state.finished = true;          // Leg zu Ende -> sperren
-      // Optional kleiner Toast (kannst du weglassen)
+      state.finished = true;            // Leg zu Ende -> sperren
       document.body.insertAdjacentHTML('beforeend',
         `<div id="legToast" style="position:fixed;inset:auto 0 24px 0;display:flex;justify-content:center;pointer-events:none">
           <div style="background:#1f2937cc;border:1px solid #6ee7b7;padding:10px 14px;border-radius:12px;color:#d1fae5;font-weight:700">
@@ -505,52 +509,66 @@ document.querySelectorAll('.dart-icon').forEach(img => {
       return;
     }
 
-    // Drei Darts voll?
-    // neu: 3. Wurf kurz sichtbar lassen, dann wechseln
-    if (state.darts.length >= 3) {
-      setTimeout(() => {
-        state.darts = [];
-        nextPlayer();
-      }, 350); // 300–400ms fühlt sich gut an
-      return;
+    // 3 Würfe voll -> Aufnahme beendet, aber erst wechseln wenn Darts gezogen
+    if(state.darts.length >= 3){
+      state.visitEnded = true;
+      checkAutoNext();   // wechselt erst, wenn stuckDarts == 0
     }
-
   }
+
 
 
   function undo(){
     const last = state.history.pop(); if(!last) return;
-    state.finished = false;   // <<< wichtig: wieder entsperren
+    state.finished = false;   // nach Undo wieder freigeben
 
-    if(last.type==='NEXT'){
+    if(last.type === 'NEXT'){
       state.curPlayer = last.prev;
       state.darts = collectTurn(state.curPlayer);
-      renderScores(); refreshLanes(); return;
-    }
-    // falls letzter Eintrag ein BUST war, nimm noch einen zurück
-    if(last.type==='BUST'){
-      const t = state.history.pop();
-      if(t && t.type==='THROW'){
-        state.players[t.player].score += t.value;   // war vor Bust addThrow
-      }
-      state.darts = [];
+      state.visitEnded = (state.darts.length >= 3); // ggf. wieder offen
       renderScores(); refreshLanes(); 
       return;
     }
+
+    if(last.type === 'BUST'){
+      // Bust-Eintrag rückgängig -> davor war ein THROW
+      const t = state.history.pop();
+      if(t && t.type === 'THROW'){
+        state.players[t.player].score += t.value;
+        // stuckDarts korrigieren (nur wenn kein Miss war)
+        const wasMiss = (t.label === '0' || t.ring === 'M');
+        if(!wasMiss && state.stuckDarts > 0) state.stuckDarts--;
+        // der Wurf war schon in state.darts (Bust addThrow nimmt ihn dazu): entferne ihn wieder
+        if(state.darts.length) state.darts.pop();
+      }
+      state.visitEnded = false;
+      renderScores(); refreshLanes();
+      return;
+    }
+
     // normaler Throw
     state.players[last.player].score += last.value;
-    if(last.player===state.curPlayer){ state.darts.pop(); }
-    else { state.curPlayer = last.player; const t = collectTurn(state.curPlayer); t.pop(); state.darts = t; }
+    const wasMiss = (last.label === '0' || last.ring === 'M');
+    if(!wasMiss && state.stuckDarts > 0) state.stuckDarts--;
+
+    if(last.player === state.curPlayer){
+      if(state.darts.length) state.darts.pop();
+    }else{
+      state.curPlayer = last.player;
+      const t = collectTurn(state.curPlayer); t.pop(); state.darts = t;
+    }
+    state.visitEnded = (state.darts.length >= 3) ? true : false;
     renderScores(); refreshLanes();
   }
 
-
   function nextPlayer(){
-    if(state.finished) return; // nach Leg-Ende kein Wechsel
+    if(state.finished) return;
     state.history.push({type:'NEXT', prev:state.curPlayer});
     state.curPlayer = (state.curPlayer+1)%state.players.length;
     state.darts = [];
-    state.turnStartScore = state.players[state.curPlayer].score; // <<< neu
+    state.visitEnded = false;
+    state.stuckDarts = 0;
+    state.turnStartScore = state.players[state.curPlayer].score;
     renderScores(); refreshLanes();
   }
 
@@ -574,6 +592,40 @@ document.querySelectorAll('.dart-icon').forEach(img => {
     addThrow({ring:isD?'D':'S', n:25, value:isD?50:25, label:isD?'D25':'25'});
     resetRingToSingle();
   };
+
+  function onDartRemoved(){
+    if(state.stuckDarts > 0) state.stuckDarts--;
+    checkAutoNext();
+  }
+  function onAllDartsRemoved(){
+    state.stuckDarts = 0;
+    checkAutoNext();
+  }
+  function checkAutoNext(){
+    // Nur wechseln, wenn die Aufnahme beendet ist und keine Pfeile mehr stecken
+    if(state.visitEnded && !state.finished && state.stuckDarts === 0){
+      // Aufnahme visuell aufräumen
+      state.darts = [];
+      state.visitEnded = false;
+      renderScores(); refreshLanes();
+      nextPlayer();
+    }
+  }
+
+  // Public + Event-Hook für den Detector/Agent
+  window.tripleOne = window.tripleOne || {};
+  window.tripleOne.dartRemoved = onDartRemoved;
+  window.tripleOne.allRemoved  = onAllDartsRemoved;
+  window.addEventListener('tripleone:dart_removed', onDartRemoved);
+  window.addEventListener('tripleone:all_removed', onAllDartsRemoved);
+
+
+  //Nur zum Testen
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'r') window.tripleOne.dartRemoved();   // r = remove one
+    if (e.key === 'a') window.tripleOne.allRemoved();    // a = all removed
+  });
+
 
 </script>
 <script>
