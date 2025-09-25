@@ -145,7 +145,7 @@
   .keypad{
   display:grid;
   grid-template-columns: 136px repeat(5, 1fr);
-  gap:18px;
+  gap:0px;
 }
 
 .chakra-button{          /* Basis */
@@ -188,6 +188,72 @@
   .btn{appearance:none; border:1px solid #3a5fb2; background:#1a356b; color:#fff; border-radius:14px; padding:12px 16px; cursor:pointer; min-width:140px; height:48px}
   .btn:hover{background:#21417c}
   .btn.primary{background:linear-gradient(180deg, var(--good), var(--good2)); border:none; box-shadow: inset 0 -2px 0 rgba(0,0,0,.15)}
+
+/* Top-Controls rechts */
+.topbar {
+  display:flex; justify-content:flex-end; align-items:center;
+  gap:10px; padding:6px 0 4px;
+}
+.iconbtn, .pillbtn {
+  display:inline-flex; align-items:center; justify-content:center;
+  height:34px; min-width:34px; padding:0 10px; gap:8px;
+  border-radius:10px; border:1px solid #37559b; background:#18356e;
+  color:#dbe7ff; cursor:pointer; user-select:none;
+}
+.iconbtn:hover, .pillbtn:hover { background:#1c3f7a; }
+.iconbtn svg { width:16px; height:16px; opacity:.9; }
+
+/* Abort/Surrender wie Chips */
+.pillbtn.danger { border-color:#ff7592; background:#3a2140; color:#ffd7e0; }
+
+/* Modal */
+.modal-backdrop{
+  position:fixed; inset:0; background:rgba(0,0,0,.45); display:none;
+  align-items:center; justify-content:center; z-index:30;
+}
+.modal{
+  width:min(880px, 92vw); max-height:80vh; overflow:auto;
+  background:#1b2f60; border:1px solid #2c4b8a; border-radius:16px;
+  box-shadow:0 18px 50px rgba(0,0,0,.5); padding:16px;
+}
+.modal h3{ margin:6px 0 12px; }
+.modal .close{ float:right; cursor:pointer; opacity:.8 }
+.stat-grid{
+  display:grid; grid-template-columns: 1.2fr repeat(5, 1fr); gap:8px;
+  align-items:center; margin-top:8px;
+}
+.stat-grid .th{ font-weight:700; color:#eaf2ff; }
+.stat-grid .cell{ background:#163066; border:1px solid #2d4f94; border-radius:8px; padding:8px 10px; }
+
+/* View-Switch Buttons (rechts oben bei deiner Topbar) */
+.segment-switch{
+  display:inline-flex; border-radius:12px; overflow:hidden; border:1px solid #37559b;
+}
+.segment-switch button{
+  height:34px; min-width:42px; padding:0 10px; display:inline-flex; align-items:center; justify-content:center;
+  background:#18356e; color:#dbe7ff; cursor:pointer; border:0;
+}
+.segment-switch button + button{ border-left:1px solid #37559b; }
+.segment-switch button.active{ background:#1c3f7a; outline:2px solid #6ea8ff; }
+
+#heatWrap{
+  display:none; position:relative; margin:16px auto; width:min(860px, 92vw);
+  aspect-ratio: 1 / 1; /* quadratisch */
+  background: radial-gradient(120% 90% at 50% 10%, #26457f 0%, #112355 70%, transparent 100%);
+  border:1px solid var(--card-bd); border-radius:16px; box-shadow: var(--shadow);
+}
+#heatCanvas{ position:absolute; inset:0; width:100%; height:100%; }
+
+.view-toggle{display:flex; gap:8px; margin:8px 0 12px}
+.vt-btn{border:1px solid #2a4a8a; background:#132c64a6; color:#fff; border-radius:10px; padding:8px 10px; cursor:pointer}
+.vt-btn.is-active{outline:2px solid #6ea8ff}
+
+.hidden{display:none}
+
+.boardWrap{position:relative; width:100%; max-width:900px; margin:0 auto}
+.boardSvg svg{display:block; width:100%; height:auto}
+#heatCanvas{position:absolute; inset:0; pointer-events:none}
+
 </style>
 </head>
 <body>
@@ -203,6 +269,47 @@
   <div class="mainwrap">
     <main class="main">
       <div class="toolbar" id="toolbar"></div>
+      <!-- Rechts oben: kleine Control-Leiste -->
+      <div class="topbar">
+        <!-- Zuschauer -->
+        <button class="iconbtn" title="Viewers">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5c-7 0-11 7-11 7s4 7 11 7 11-7 11-7-4-7-11-7Zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Z"/></svg>
+          <span id="viewerBadge">1</span>
+        </button>
+        <!-- Einstellungen (dummys) -->
+        <button class="iconbtn" title="Settings">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8Zm8.94 3a8.94 8.94 0 0 0-.36-1l2.12-1.65-2-3.46-2.54 1a9.14 9.14 0 0 0-1.73-1l-.39-2.71H9l-.39 2.71a9.14 9.14 0 0 0-1.73 1l-2.54-1-2 3.46L3.46 10a8.94 8.94 0 0 0-.36 1l-2.6.39v4l2.6.39a8.94 8.94 0 0 0 .36 1l-2.12 1.65 2 3.46 2.54-1c.54.4 1.12.74 1.73 1l.39 2.71h4l.39-2.71c.61-.26 1.19-.6 1.73-1l2.54 1 2-3.46L20.54 17c.15-.32.27-.66.36-1l2.6-.39v-4l-2.56-.39Z"/></svg>
+        </button>
+        <!-- Statistik -->
+        <button class="iconbtn" id="btnStats" title="Match statistics">
+          <svg viewBox="0 0 24 24" fill="currentColor"><path d="M4 21h16v-2H4v2Zm2-4h3V8H6v9Zm5 0h3V4h-3v13Zm5 0h3v-6h-3v6Z"/></svg>
+        </button>
+        <!-- Dummy: Abort / Surrender -->
+        <button class="pillbtn danger" id="btnAbort">Abort</button>
+        <button class="pillbtn danger" id="btnSurrender">Surrender</button>
+
+        <div class="segment-switch" style="margin-right:8px">
+          <button id="btnViewKey" class="active" title="Tastatur">
+            <!-- Keyboard Icon -->
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M4 5h16a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Zm1 3v2h2V8H5Zm3 0v2h2V8H8Zm3 0v2h2V8h-2Zm3 0v2h2V8h-2Zm3 0v2h2V8h-2ZM5 12v2h2v-2H5Zm3 0v2h8v-2H8Zm11 0v2h2v-2h-2Z"/></svg>
+          </button>
+          <button id="btnViewHeat" title="Heat-Map">
+            <!-- Circle/record Icon -->
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><path d="M12 3a9 9 0 1 0 .001 18.001A9 9 0 0 0 12 3Zm0 13a4 4 0 1 1 0-8 4 4 0 0 1 0 8Z"/></svg>
+          </button>
+        </div>
+
+      </div>
+
+      <!-- Statistik-Modal -->
+      <div class="modal-backdrop" id="statsModal">
+        <div class="modal">
+          <span class="close" id="statsClose">✕</span>
+          <h3>Match statistics</h3>
+          <div id="statsContent"></div>
+        </div>
+      </div>
+
 
       <div class="row" id="scoreRow"></div>
 
@@ -212,6 +319,9 @@
           <div class="lane"><img class="dart-icon" alt=""><div class="dart-label"></div></div>
           <div class="lane"><img class="dart-icon" alt=""><div class="dart-label"></div></div>
           <div class="lane"><img class="dart-icon" alt=""><div class="dart-label"></div></div>
+      </div>
+      <div id="heatWrap">
+        <canvas id="heatCanvas"></canvas>
       </div>
 
       <section class="pad">
@@ -352,6 +462,22 @@
 // call initially
 renderScores();
 state.turnStartScore = state.players[state.curPlayer].score;
+
+const padEl   = document.querySelector('.pad');
+const heatEl  = document.getElementById('heatWrap');
+const btnKey  = document.getElementById('btnViewKey');
+const btnHeat = document.getElementById('btnViewHeat');
+
+function setView(mode){
+  const isHeat = (mode === 'heat');
+  padEl.style.display  = isHeat ? 'none' : 'block';
+  heatEl.style.display = isHeat ? 'block' : 'none';
+  btnKey.classList.toggle('active', !isHeat);
+  btnHeat.classList.toggle('active', isHeat);
+  if(isHeat) drawHeat(); // sicherstellen, dass Canvas dimensions korrekt sind
+}
+btnKey.addEventListener('click', ()=>setView('key'));
+btnHeat.addEventListener('click', ()=>setView('heat'));
 
 
   // ------- Lanes + Sum -------
@@ -516,6 +642,26 @@ document.querySelectorAll('.dart-icon').forEach(img => {
     }
   }
 
+  // --- optionaler Fake-Hit für die Heatmap (grob auf Ring-Mitte) ---
+  (function fakeHeatFromLabel(){
+    if(heatEl.style.display === 'none') return; // nur wenn sichtbar
+    const label = obj.label; // z.B. "S20", "D18", "T7", "0"
+    if(label === '0') return;
+
+    // Ring -> Radius
+    const rmap = { 'S': 0.75, 'D': 0.95, 'T': 0.58 }; // grobe Ringmitten
+    const ringR = rmap[obj.ring] || 0.85;
+    // Segment -> Winkel (20 oben, dann im Uhrzeigersinn alle 18°)
+    const order = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+    const idx = order.indexOf(obj.n);
+    if(idx >= 0){
+      const angle = idx * 18; // 0,18,36,...
+      // kleine Streuung
+      const jitterR = (Math.random()-0.5)*0.04;
+      const jitterA = (Math.random()-0.5)*5;
+      addHitPolar(Math.min(1, Math.max(0, ringR + jitterR)), angle + jitterA, 0.9);
+    }
+  })();
 
 
   function undo(){
@@ -625,6 +771,314 @@ document.querySelectorAll('.dart-icon').forEach(img => {
     if (e.key === 'r') window.tripleOne.dartRemoved();   // r = remove one
     if (e.key === 'a') window.tripleOne.allRemoved();    // a = all removed
   });
+
+  // --- Statistiken pro Spieler aus state.history berechnen ---
+function computeMatchStats(){
+  const P = state.players.length;
+  const res = Array.from({length:P}, (_,i)=>({
+    name: state.players[i].name,
+    darts: 0, visits: 0,
+    oneAvg: 0, threeAvg: 0,
+    v60:0, v100:0, v140:0, bestVisit:0
+  }));
+
+  // Besuchswerte pro Spieler sammeln
+  const curVisit = Array.from({length:P}, ()=>0);
+  const curDarts = Array.from({length:P}, ()=>0);
+
+  function closeVisit(p){               // Besuch abschließen
+    if(curDarts[p]===0) return;
+    res[p].visits++;
+    res[p].darts += curDarts[p];
+    res[p].bestVisit = Math.max(res[p].bestVisit, curVisit[p]);
+    const v = curVisit[p];
+    if(v>=140) res[p].v140++; else if(v>=100) res[p].v100++; else if(v>=60) res[p].v60++;
+    curVisit[p]=0; curDarts[p]=0;
+  }
+
+  for(const h of state.history){
+    if(h.type==='THROW'){
+      curVisit[h.player]+= h.value;
+      curDarts[h.player]+= 1;
+    }else if(h.type==='BUST'){
+      // Bust beendet die Aufnahme mit 0 Punkten in der Visit-Summe
+      const p = h.player;
+      // Darts wurden schon bei THROW gezählt; Visit schließen
+      closeVisit(p);
+    }else if(h.type==='NEXT'){
+      closeVisit(h.prev);
+    }
+  }
+  // laufende Visits am Ende schließen
+  for(let p=0;p<P;p++) closeVisit(p);
+
+  // Averages berechnen
+  for(const r of res){
+    const scored = BASE*r.visits*3 - (/* not exact if Legs >1 */ 0); // Verwendung history für exakte Punkte ist simpler:
+  }
+  // exakte Punkte aus History (summe aller geworfenen Werte minus Bust-Rücknahmen)
+  const scoredByP = Array.from({length:P}, ()=>0);
+  for(const h of state.history){
+    if(h.type==='THROW') scoredByP[h.player]+=h.value;
+    if(h.type==='BUST'){ /* nothing */ }
+  }
+  for(let i=0;i<P;i++){
+    const r = res[i];
+    const pts = scoredByP[i];
+    r.oneAvg   = r.darts ? (pts / r.darts) : 0;
+    r.threeAvg = r.darts ? (r.oneAvg * 3) : 0;
+    r.oneAvg   = r.oneAvg.toFixed(1);
+    r.threeAvg = r.threeAvg.toFixed(1);
+  }
+  return res;
+}
+
+function renderStatsModal(){
+  const stats = computeMatchStats();
+  const el = document.getElementById('statsContent');
+  // Tabelle
+  let html = `<div class="stat-grid">
+    <div></div>
+    <div class="th">Darts</div>
+    <div class="th">Visits</div>
+    <div class="th">Ø/1</div>
+    <div class="th">Ø/3</div>
+    <div class="th">Best</div>
+  </div>`;
+  for(const s of stats){
+    html += `<div class="stat-grid">
+      <div class="cell"><b>${s.name}</b></div>
+      <div class="cell">${s.darts}</div>
+      <div class="cell">${s.visits}</div>
+      <div class="cell">${s.oneAvg}</div>
+      <div class="cell">${s.threeAvg}</div>
+      <div class="cell">${s.bestVisit}</div>
+    </div>`;
+  }
+  // zweite Reihe: 60+/100+/140+
+  html += `<div style="height:8px"></div>
+           <div class="stat-grid">
+            <div></div>
+            <div class="th">60+</div><div class="th">100+</div><div class="th">140+</div>
+            <div></div><div></div>
+           </div>`;
+  for(const s of stats){
+    html += `<div class="stat-grid">
+      <div class="cell"><b>${s.name}</b></div>
+      <div class="cell">${s.v60}</div>
+      <div class="cell">${s.v100}</div>
+      <div class="cell">${s.v140}</div>
+      <div></div><div></div>
+    </div>`;
+  }
+  el.innerHTML = html;
+}
+
+function openStats(){ renderStatsModal(); document.getElementById('statsModal').style.display='flex'; }
+function closeStats(){ document.getElementById('statsModal').style.display='none'; }
+
+document.getElementById('btnStats').addEventListener('click', openStats);
+document.getElementById('statsClose').addEventListener('click', closeStats);
+document.getElementById('statsModal').addEventListener('click', (e)=>{ if(e.target.id==='statsModal') closeStats(); });
+
+// Dummies
+document.getElementById('btnAbort').onclick = ()=>alert('Abort (stub)');
+document.getElementById('btnSurrender').onclick = ()=>alert('Surrender (stub)');
+
+// --- Heat-Map Daten ---
+const heat = {
+  hits: [],          // {x,y,intensity} in Canvas-Pixeln
+  byPlayer: {}       // optional pro Spieler sammeln
+};
+
+function getCanvasAndCtx(){
+  const canvas = document.getElementById('heatCanvas');
+  const rect = canvas.parentElement.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width  = Math.floor(rect.width  * dpr);
+  canvas.height = Math.floor(rect.height * dpr);
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // 1 CSS-px = 1 unit
+  return {canvas, ctx, w: rect.width, h: rect.height};
+}
+
+function drawBoard(ctx, w, h){
+  const cx = w/2, cy = h/2;
+  const R  = Math.min(w,h)*0.47;
+
+  // Grund
+  ctx.fillStyle = '#101726';
+  ctx.fillRect(0,0,w,h);
+
+  // Glow
+  const g = ctx.createRadialGradient(cx, cy, R*0.65, cx, cy, R*1.05);
+  g.addColorStop(0, 'rgba(255,0,0,0.10)');
+  g.addColorStop(1, 'rgba(255,0,0,0.0)');
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(cx,cy,R*1.05,0,Math.PI*2); ctx.fill();
+
+  // Außenring + Segmente grob
+  ctx.fillStyle = '#0c0c0f';
+  ctx.beginPath(); ctx.arc(cx,cy,R,0,Math.PI*2); ctx.fill();
+
+  // Doppel / Triple / Single & Bulls – minimalistisch
+  function ring(col, o, i){
+    ctx.fillStyle = col;
+    ctx.beginPath(); ctx.arc(cx,cy,R*o,0,Math.PI*2); ctx.fill();
+    ctx.fillStyle = '#0c0c0f';
+    ctx.beginPath(); ctx.arc(cx,cy,R*i,0,Math.PI*2); ctx.fill();
+  }
+  ring('rgba(210,64,70,0.85)', 0.98, 0.90); // Double
+  ring('rgba(52,199,89,0.85)', 0.62, 0.54); // Triple
+  // Bulls
+  ctx.fillStyle = '#34c759'; ctx.beginPath(); ctx.arc(cx,cy,R*0.07,0,Math.PI*2); ctx.fill();
+  ctx.fillStyle = '#d53d43'; ctx.beginPath(); ctx.arc(cx,cy,R*0.025,0,Math.PI*2); ctx.fill();
+}
+
+function drawHeat(){
+  const {ctx,w,h} = getCanvasAndCtx();
+  drawBoard(ctx, w, h);
+
+  // Heat-Spots
+  for(const hit of heat.hits){
+    const r = Math.min(w,h) * 0.045; // Fleckgröße
+    const grd = ctx.createRadialGradient(hit.x, hit.y, 0, hit.x, hit.y, r);
+    grd.addColorStop(0, `rgba(255,80,80,${0.70 * (hit.intensity||1)})`);
+    grd.addColorStop(1, 'rgba(255,80,80,0)');
+    ctx.fillStyle = grd;
+    ctx.beginPath();
+    ctx.arc(hit.x, hit.y, r, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // dünne Glas-Schicht
+  ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(0.5,0.5,w-1,h-1);
+}
+
+// Öffentliche API für deinen Detector/Agent:
+// 1) Pixelkoordinaten (Canvas-Space)
+function addHitPx(x, y, intensity=1){
+  const {w,h} = getCanvasAndCtx();
+  heat.hits.push({ x: Math.max(0, Math.min(w, x)), y: Math.max(0, Math.min(h, y)), intensity });
+  if(heat.hits.length > 400) heat.hits.shift(); // einfacher Ringpuffer
+  if(heatEl.style.display !== 'none') drawHeat();
+}
+
+// 2) Polarkoordinaten (normierter Radius 0..1, Winkel in Grad, 0° nach oben, CW)
+function addHitPolar(rNorm, angleDeg, intensity=1){
+  const {w,h} = getCanvasAndCtx();
+  const cx = w/2, cy = h/2;
+  const R  = Math.min(w,h)*0.47;
+  const rad = (angleDeg - 90) * Math.PI/180; // 0° oben
+  const x = cx + Math.cos(rad) * (rNorm * R);
+  const y = cy + Math.sin(rad) * (rNorm * R);
+  addHitPx(x, y, intensity);
+}
+
+// 3) Leeren (z.B. beim Leg-Start)
+function clearHeat(){ heat.hits.length = 0; if(heatEl.style.display !== 'none') drawHeat(); }
+
+// Hooks exportieren
+window.tripleOne = window.tripleOne || {};
+window.tripleOne.addHitPx    = addHitPx;
+window.tripleOne.addHitPolar = addHitPolar;
+window.tripleOne.clearHeat   = clearHeat;
+
+// bei Resize neu zeichnen, wenn sichtbar
+window.addEventListener('resize', ()=>{ if(heatEl.style.display !== 'none') drawHeat(); });
+
+// --- View switch (Keyboard <-> Heat) ---
+const elKeys  = document.getElementById('viewKeys');
+const elHeat  = document.getElementById('viewHeat');
+const bKeys   = document.getElementById('btnViewKeys');
+const bHeat   = document.getElementById('btnViewHeat');
+bKeys.onclick = () => { bKeys.classList.add('is-active'); bHeat.classList.remove('is-active'); elKeys.classList.remove('hidden'); elHeat.classList.add('hidden'); };
+bHeat.onclick = () => { bHeat.classList.add('is-active'); bKeys.classList.remove('is-active'); elHeat.classList.remove('hidden'); elKeys.classList.add('hidden'); sizeHeat(); drawHeat(); };
+
+// --- Heat-Board laden (deine SVG) ---
+const boardHost = document.getElementById('boardSvg');
+const heatCanvas = document.getElementById('heatCanvas');
+const hctx = heatCanvas.getContext('2d', { alpha:true });
+
+let svgEl = null;              // referenz aufs geladene <svg>
+let Rpx   = 0;                 // Board-Radius in Pixeln (für Projektion)
+let cx    = 0, cy = 0;         // Canvas-Zentrum
+
+(async function loadBoardSvg(){
+  const txt = await fetch('assets/heat_board.svg').then(r=>r.text());
+  boardHost.innerHTML = txt;
+  svgEl = boardHost.querySelector('svg');
+  sizeHeat();  // initiale Canvas-Größe
+  drawHeat();  // erste Zeichnung
+})();
+
+// Canvas an SVG-Box anpassen
+function sizeHeat(){
+  if(!svgEl) return;
+  const box = svgEl.getBoundingClientRect();
+  const dpr = window.devicePixelRatio || 1;
+  heatCanvas.style.width  = box.width  + 'px';
+  heatCanvas.style.height = box.height + 'px';
+  heatCanvas.width  = Math.round(box.width  * dpr);
+  heatCanvas.height = Math.round(box.height * dpr);
+
+  // Mittelpunkt + Radius in Pixeln (SVG ist quadratisch, Board-Radius ~ Hälfte)
+  cx = heatCanvas.width/2;
+  cy = heatCanvas.height/2;
+  Rpx = Math.min(heatCanvas.width, heatCanvas.height)/2;
+}
+window.addEventListener('resize', ()=>{ if(!elHeat.classList.contains('hidden')) { sizeHeat(); drawHeat(); }});
+
+// --- Heat-Daten und Malroutine (Beispiel) ---
+const heat = {
+  // Beispielpunkte: angle in Grad (0 = oben), rNorm: 0..1 (1 = Double-Außen)
+  hits: [
+    { angleDeg: -10, rNorm: 0.95, weight: 1.0 },  // nahe Double 20
+    { angleDeg: 0,   rNorm: 0.60, weight: 0.8  }, // Single Top
+  ]
+};
+
+function drawHeat(){
+  if(!svgEl) return;
+  const ctx = hctx;
+  ctx.clearRect(0,0,heatCanvas.width, heatCanvas.height);
+
+  for(const p of heat.hits){
+    // Projektion: 0° oben, im Uhrzeigersinn (SVG ist so orientiert)
+    const a = (p.angleDeg - 90) * Math.PI/180; // -90, damit 0° oben
+    const r = Math.min(Math.max(p.rNorm,0),1) * Rpx;
+    const x = cx + r * Math.cos(a);
+    const y = cy + r * Math.sin(a);
+    drawBlob(ctx, x, y, 18 * (window.devicePixelRatio||1), p.weight||1);
+  }
+}
+
+// weicher Punkt
+function drawBlob(ctx, x, y, radius, strength){
+  const g = ctx.createRadialGradient(x,y,0, x,y,radius);
+  g.addColorStop(0, `rgba(255, 0, 0, ${0.25*strength})`);
+  g.addColorStop(1, 'rgba(255, 0, 0, 0)');
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(x,y,radius,0,Math.PI*2); ctx.fill();
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+function onConfirmedHit(sector, ring){
+  // Beispiel: aus S/D/T + Zahl -> Winkel & Radius schätzen
+  const sectorOrder = [20,1,18,4,13,6,10,15,2,17,3,19,7,16,8,11,14,9,12,5];
+  const idx = sectorOrder.indexOf(sector); // 0..19
+  const angleDeg = (idx * (360/20));       // Mitte des Sektors
+
+  // grobe Ringradien (0..1): Single = 0.57 oder 0.92, Triple = 0.58..0.62, Double = ~0.95
+  const rMap = { S:0.78, T:0.58, D:0.95, BULL:0.03, OUTER:0.07 };
+  const rNorm = rMap[ring] ?? 0.78;
+
+  heat.hits.push({ angleDeg, rNorm, weight: 1.0 });
+  if(!elHeat.classList.contains('hidden')) drawHeat();
+}
 
 
 </script>
